@@ -2,133 +2,166 @@
 
 ## Aim
 
-Extend the MVP into a full-featured production system with write support, observability, multi-platform clients, and administrative capabilities.
+Extend the MVP into a full-featured production system with write support, observability, and prepare for multi-platform clients.
+
+## Implemented Features
+
+### 2.1 Observability (Complete)
+- [x] Prometheus metrics endpoint (`/metrics` on port 9090)
+- [x] Structured JSON logging (zap)
+- [x] Request logging with correlation IDs
+- [x] HTTP request metrics (count, duration, status)
+- [x] Content transfer metrics (bytes downloaded/uploaded)
+- [x] Database query metrics
+- [x] S3 operation metrics
+- [x] Authentication metrics
+
+### 2.2 Write Operations - Server Side (Complete)
+- [x] File upload endpoint (`POST /api/v1/content/{path}`)
+- [x] Directory creation (`PUT /api/v1/tree/{path}?type=dir`)
+- [x] File/directory deletion (`DELETE /api/v1/tree/{path}`)
+- [x] Recursive directory deletion
+- [x] Automatic parent directory creation
+- [x] Max upload size limit (configurable)
+
+### 2.3 Write Operations - FUSE Client (Pending)
+- [ ] FUSE Create operation
+- [ ] FUSE Write operation
+- [ ] FUSE Mkdir operation
+- [ ] FUSE Unlink operation
+- [ ] FUSE Rmdir operation
 
 ## Planned Features
 
-### 2.1 Observability (Priority: High, Effort: Small)
-- [ ] Prometheus metrics endpoint (`/metrics`)
-- [ ] Structured JSON logging (zap or zerolog)
-- [ ] Request tracing with correlation IDs
-- [ ] Grafana dashboard templates
-- [ ] Cache hit/miss metrics
-- [ ] Download/upload throughput metrics
-
-### 2.2 Write Operations (Priority: High, Effort: Medium)
-- [ ] File upload endpoint (`POST /api/v1/content`)
-- [ ] File creation (`PUT /api/v1/tree/{path}`)
-- [ ] File deletion (`DELETE /api/v1/tree/{path}`)
-- [ ] Directory creation (`POST /api/v1/tree/{path}?type=dir`)
-- [ ] FUSE write operations (Create, Write, Mkdir, Unlink, Rmdir)
-- [ ] Atomic uploads with temp files
-- [ ] Upload progress tracking
-
-### 2.3 Versioning & Conflict Detection (Priority: High, Effort: Medium)
+### 2.4 Versioning & Conflict Detection (Not Started)
 - [ ] Per-file version tracking in metadata
 - [ ] Conflict detection on concurrent modifications
-- [ ] Simple conflict resolution (last-write-wins or manual)
 - [ ] Version history API
 - [ ] Rollback to previous versions
 
-### 2.4 Admin UI (Priority: Medium, Effort: Large)
-- [ ] Admin API endpoints (user CRUD, device management)
-- [ ] Web UI (Vue.js or React)
-- [ ] User management interface
-- [ ] Device/token management
-- [ ] Storage statistics dashboard
-- [ ] Activity logs
+### 2.5 Admin UI (Not Started)
+- [ ] Admin API endpoints
+- [ ] Web UI
 
-### 2.5 Windows Client (Priority: High, Effort: Extra Large)
-- [ ] C++ CfAPI shim for Windows Cloud Files API
-- [ ] CGO integration with Go client core
-- [ ] Sync root registration
-- [ ] Placeholder file creation
-- [ ] Hydration callbacks (on-demand fetch)
-- [ ] Explorer shell integration
-- [ ] Windows installer (MSI or MSIX)
-- [ ] Requires: Windows 10 1809+, Visual Studio, Windows SDK
+### 2.6 Windows Client (Not Started)
+- [ ] C++ CfAPI shim
+- [ ] CGO integration
 
-### 2.6 Multi-User Support (Priority: Medium, Effort: Large)
-- [ ] User data isolation
-- [ ] Per-user storage quotas
-- [ ] Sharing and permissions
-- [ ] User groups/teams
+## Architecture
 
-### 2.7 Mobile Apps (Priority: Low, Effort: Extra Large)
-- [ ] Android app (Kotlin)
-- [ ] iOS app (Swift)
-- [ ] Browse and manual download
-- [ ] Offline pinning
-- [ ] Encrypted local cache
-
-## Status: Not Started
-
-Phase 2 development begins after Phase 1 is complete and tested.
-
-## Architecture Changes
-
-### Database Schema Additions
-```sql
--- File versions
-ALTER TABLE files ADD COLUMN version INTEGER DEFAULT 1;
-ALTER TABLE files ADD COLUMN previous_version_id TEXT;
-
--- Version history
-CREATE TABLE file_versions (
-    id TEXT PRIMARY KEY,
-    file_id TEXT REFERENCES files(id),
-    version INTEGER,
-    hash TEXT,
-    s3_key TEXT,
-    size BIGINT,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- User quotas
-ALTER TABLE users ADD COLUMN quota_bytes BIGINT DEFAULT 10737418240; -- 10GB
-ALTER TABLE users ADD COLUMN used_bytes BIGINT DEFAULT 0;
+```
+┌─────────────────┐     ┌─────────────────┐
+│   Main Server   │     │  Metrics Server │
+│   :8080         │     │   :9090         │
+│                 │     │   /metrics      │
+│  - /health      │     └─────────────────┘
+│  - /api/v1/*    │
+└────────┬────────┘
+         │
+    ┌────┴────┐
+    │ Logging │  ← Structured JSON (zap)
+    │ Metrics │  ← Prometheus counters/histograms
+    └────┬────┘
+         │
+   ┌─────┴─────┐
+   │ PostgreSQL│ ← Metadata + Auth
+   │   MinIO   │ ← File content
+   └───────────┘
 ```
 
-### New API Endpoints
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/metrics` | GET | Prometheus metrics |
-| `/api/v1/content` | POST | Upload new file |
-| `/api/v1/tree/{path}` | PUT | Create/update file metadata |
-| `/api/v1/tree/{path}` | DELETE | Delete file/directory |
-| `/api/v1/versions/{id}` | GET | Get version history |
-| `/api/v1/admin/users` | GET/POST | User management |
-| `/api/v1/admin/devices` | GET/DELETE | Device management |
+## API Endpoints
+
+### Read Operations (from Phase 1)
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/health` | GET | No | Health check |
+| `/api/v1/auth/token` | POST | No | Login, get JWT |
+| `/api/v1/tree` | GET | Yes | Full metadata tree |
+| `/api/v1/tree/{path}` | GET | Yes | Subtree metadata |
+| `/api/v1/content/{id}` | GET | Yes | File content (Range supported) |
+
+### Write Operations (Phase 2)
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/content/{path}` | POST | Yes | Upload file content |
+| `/api/v1/tree/{path}?type=dir` | PUT | Yes | Create directory |
+| `/api/v1/tree/{path}` | DELETE | Yes | Delete file/directory |
+
+### Metrics
+| Endpoint | Port | Description |
+|----------|------|-------------|
+| `/metrics` | 9090 | Prometheus metrics |
+
+## Prometheus Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `fruitsalade_http_requests_total` | Counter | Total HTTP requests by method/path/status |
+| `fruitsalade_http_request_duration_seconds` | Histogram | Request duration |
+| `fruitsalade_content_bytes_downloaded_total` | Counter | Total bytes downloaded |
+| `fruitsalade_content_bytes_uploaded_total` | Counter | Total bytes uploaded |
+| `fruitsalade_content_downloads_total` | Counter | Download count by status |
+| `fruitsalade_content_uploads_total` | Counter | Upload count by status |
+| `fruitsalade_metadata_tree_size` | Gauge | Number of files in tree |
+| `fruitsalade_metadata_refresh_duration_seconds` | Histogram | Tree rebuild time |
+| `fruitsalade_auth_attempts_total` | Counter | Auth attempts by result |
+| `fruitsalade_active_tokens` | Gauge | Active JWT tokens |
+| `fruitsalade_db_query_duration_seconds` | Histogram | DB query duration |
+| `fruitsalade_db_connections_open` | Gauge | Open DB connections |
+| `fruitsalade_s3_operation_duration_seconds` | Histogram | S3 operation duration |
+| `fruitsalade_s3_operations_total` | Counter | S3 operations by type/status |
+
+## Configuration
+
+### Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LISTEN_ADDR` | `:8080` | Main server address |
+| `METRICS_ADDR` | `:9090` | Metrics server address |
+| `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `LOG_FORMAT` | `json` | Log format (json, console) |
+| `DATABASE_URL` | (required) | PostgreSQL connection string |
+| `S3_ENDPOINT` | `http://localhost:9000` | S3/MinIO endpoint |
+| `S3_BUCKET` | `fruitsalade` | S3 bucket name |
+| `S3_ACCESS_KEY` | `minioadmin` | S3 access key |
+| `S3_SECRET_KEY` | `minioadmin` | S3 secret key |
+| `JWT_SECRET` | (required) | JWT signing secret |
+| `MAX_UPLOAD_SIZE` | `104857600` | Max upload size (100MB) |
 
 ## Build & Run
 
 ```bash
-# Build Phase 2 components (once implemented)
-make phase2
+# Build Phase 2 server
+make phase2-server
 
-# Build Windows client (requires Windows + CGO)
-make phase2-windows
+# Run locally (requires PostgreSQL + MinIO)
+DATABASE_URL="postgres://..." JWT_SECRET="secret" ./bin/phase2-server
 
-# Run tests
-make phase2-test
+# Build for Docker (uses Phase 1 Dockerfile as base)
+# TODO: Create Phase 2 Docker environment
 ```
 
-## Dependencies
+## Testing Write Operations
 
-Phase 2 requires Phase 1 to be complete:
-- PostgreSQL metadata store ✓
-- S3 content storage ✓
-- JWT authentication ✓
-- FUSE client foundation ✓
-- Docker environment ✓
+```bash
+# Get auth token
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin"}' | jq -r .token)
 
-## Development Order
+# Upload a file
+curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "Hello, World!"
 
-Recommended implementation sequence:
-1. **Observability** - Metrics and logging (foundation for debugging)
-2. **Write Operations** - File upload/create/delete
-3. **Versioning** - Track changes, detect conflicts
-4. **Admin UI** - Management interface
-5. **Windows Client** - Platform expansion
-6. **Multi-User** - Enterprise features
-7. **Mobile Apps** - Mobile access
+# Create a directory
+curl -X PUT "http://localhost:8080/api/v1/tree/test/subdir?type=dir" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Delete a file
+curl -X DELETE http://localhost:8080/api/v1/tree/test/hello.txt \
+  -H "Authorization: Bearer $TOKEN"
+
+# Check metrics
+curl http://localhost:9090/metrics | grep fruitsalade
+```

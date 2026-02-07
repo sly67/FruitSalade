@@ -1,0 +1,95 @@
+// Package config loads configuration from environment variables.
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+)
+
+// Config holds all Phase 2 server configuration.
+type Config struct {
+	// Server
+	ListenAddr  string
+	MetricsAddr string
+
+	// Logging
+	LogLevel  string
+	LogFormat string
+
+	// Database
+	DatabaseURL string
+
+	// S3 storage
+	S3Endpoint  string
+	S3Bucket    string
+	S3AccessKey string
+	S3SecretKey string
+	S3Region    string
+	S3UseSSL    bool
+
+	// Auth
+	JWTSecret string
+
+	// Uploads
+	MaxUploadSize int64
+}
+
+// Load reads configuration from environment variables with defaults.
+func Load() (*Config, error) {
+	cfg := &Config{
+		ListenAddr:    envOr("LISTEN_ADDR", ":8080"),
+		MetricsAddr:   envOr("METRICS_ADDR", ":9090"),
+		LogLevel:      envOr("LOG_LEVEL", "info"),
+		LogFormat:     envOr("LOG_FORMAT", "json"),
+		DatabaseURL:   envOr("DATABASE_URL", ""),
+		S3Endpoint:    envOr("S3_ENDPOINT", "http://localhost:9000"),
+		S3Bucket:      envOr("S3_BUCKET", "fruitsalade"),
+		S3AccessKey:   envOr("S3_ACCESS_KEY", "minioadmin"),
+		S3SecretKey:   envOr("S3_SECRET_KEY", "minioadmin"),
+		S3Region:      envOr("S3_REGION", "us-east-1"),
+		S3UseSSL:      envBool("S3_USE_SSL", false),
+		JWTSecret:     envOr("JWT_SECRET", ""),
+		MaxUploadSize: envInt64("MAX_UPLOAD_SIZE", 100*1024*1024), // 100MB default
+	}
+
+	if cfg.DatabaseURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.JWTSecret == "" {
+		return nil, fmt.Errorf("JWT_SECRET is required")
+	}
+
+	return cfg, nil
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return b
+}
+
+func envInt64(key string, fallback int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	i, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return i
+}
