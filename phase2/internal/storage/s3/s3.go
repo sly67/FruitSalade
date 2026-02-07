@@ -212,6 +212,48 @@ func (s *Storage) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
+// CopyObject copies an S3 object from srcKey to dstKey.
+func (s *Storage) CopyObject(ctx context.Context, srcKey, dstKey string) error {
+	start := time.Now()
+
+	_, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(s.bucket),
+		Key:        aws.String(dstKey),
+		CopySource: aws.String(s.bucket + "/" + srcKey),
+	})
+	if err != nil {
+		metrics.RecordS3Operation("copy_object", time.Since(start), false)
+		return fmt.Errorf("copy %s -> %s: %w", srcKey, dstKey, err)
+	}
+
+	metrics.RecordS3Operation("copy_object", time.Since(start), true)
+	logging.Debug("S3 copy object", zap.String("src", srcKey), zap.String("dst", dstKey))
+	return nil
+}
+
+// GetContentByS3Key gets content directly by S3 key (for version content).
+func (s *Storage) GetContentByS3Key(ctx context.Context, s3Key string) (io.ReadCloser, int64, error) {
+	start := time.Now()
+
+	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s3Key),
+	})
+	if err != nil {
+		metrics.RecordS3Operation("get_object", time.Since(start), false)
+		return nil, 0, fmt.Errorf("get object %s: %w", s3Key, err)
+	}
+
+	metrics.RecordS3Operation("get_object", time.Since(start), true)
+
+	totalSize := int64(0)
+	if result.ContentLength != nil {
+		totalSize = *result.ContentLength
+	}
+
+	return result.Body, totalSize, nil
+}
+
 // ObjectExists checks if an object exists in S3.
 func (s *Storage) ObjectExists(ctx context.Context, key string) (bool, error) {
 	start := time.Now()

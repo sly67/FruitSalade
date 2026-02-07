@@ -12,6 +12,7 @@ type FileNode struct {
 	ModTime  time.Time   `json:"mtime"`
 	IsDir    bool        `json:"is_dir"`
 	Hash     string      `json:"hash,omitempty"`
+	Version  int         `json:"version,omitempty"`
 	Children []*FileNode `json:"children,omitempty"`
 }
 

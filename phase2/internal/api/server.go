@@ -100,6 +100,13 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("PUT /api/v1/tree/{path...}", s.handleCreateOrUpdate)
 	protected.HandleFunc("DELETE /api/v1/tree/{path...}", s.handleDelete)
 
+	// Version endpoints (Phase 2)
+	// GET  /api/v1/versions/{path} → list versions
+	// GET  /api/v1/versions/{path}?v=N → download version content
+	// POST /api/v1/versions/{path} → rollback (body: {"version": N})
+	protected.HandleFunc("GET /api/v1/versions/{path...}", s.handleVersions)
+	protected.HandleFunc("POST /api/v1/versions/{path...}", s.handleRollback)
+
 	// Wrap protected routes with auth middleware
 	mux.Handle("/api/v1/", s.auth.Middleware(protected))
 
@@ -207,6 +214,16 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer reader.Close()
 
+	// Add version/ETag headers for conflict detection
+	if fileRow, err := s.storage.Metadata().GetFileRow(r.Context(), "/"+fileID); err == nil && fileRow != nil {
+		if fileRow.Hash != "" {
+			w.Header().Set("ETag", `"`+fileRow.Hash+`"`)
+		}
+		if fileRow.Version > 0 {
+			w.Header().Set("X-Version", strconv.Itoa(fileRow.Version))
+		}
+	}
+
 	if hasRange {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+length-1, totalSize))
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
@@ -260,6 +277,59 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// S3 key is the path without leading /
 	s3Key := strings.TrimPrefix(path, "/")
 
+	// Check if file already exists (for versioning and conflict detection)
+	newVersion := 1
+	existingRow, _ := s.storage.Metadata().GetFileRow(r.Context(), path)
+
+	// Conflict detection: check X-Expected-Version and If-Match headers
+	if existingRow != nil && !existingRow.IsDir {
+		if evStr := r.Header.Get("X-Expected-Version"); evStr != "" {
+			expectedVersion, _ := strconv.Atoi(evStr)
+			if expectedVersion > 0 && expectedVersion != existingRow.Version {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(protocol.ConflictResponse{
+					Error:           "version conflict",
+					Path:            path,
+					ExpectedVersion: expectedVersion,
+					CurrentVersion:  existingRow.Version,
+					CurrentHash:     existingRow.Hash,
+				})
+				return
+			}
+		}
+		if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+			etag := strings.Trim(ifMatch, "\"")
+			if etag != existingRow.Hash {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(protocol.ConflictResponse{
+					Error:           "content conflict (hash mismatch)",
+					Path:            path,
+					ExpectedVersion: existingRow.Version,
+					CurrentVersion:  existingRow.Version,
+					CurrentHash:     existingRow.Hash,
+				})
+				return
+			}
+		}
+	}
+
+	if existingRow != nil && !existingRow.IsDir && existingRow.Size > 0 {
+		// Save current state as a version before overwriting
+		if err := s.storage.Metadata().SaveVersion(r.Context(), path); err != nil {
+			logging.Warn("failed to save version", zap.String("path", path), zap.Error(err))
+		}
+
+		// Copy current S3 content to version backup key
+		versionKey := fmt.Sprintf("_versions/%s/%d", s3Key, existingRow.Version)
+		if err := s.storage.CopyObject(r.Context(), existingRow.S3Key, versionKey); err != nil {
+			logging.Warn("failed to backup version content", zap.String("path", path), zap.Error(err))
+		}
+
+		newVersion = existingRow.Version + 1
+	}
+
 	// Upload to S3
 	if err := s.storage.PutObject(r.Context(), s3Key, strings.NewReader(string(content)), int64(len(content))); err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to upload: "+err.Error())
@@ -287,6 +357,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		IsDir:      false,
 		Hash:       hashStr,
 		S3Key:      s3Key,
+		Version:    newVersion,
 	}
 
 	if err := s.storage.Metadata().UpsertFile(r.Context(), fileRow); err != nil {
@@ -300,14 +371,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	logging.Info("file uploaded",
 		zap.String("path", path),
 		zap.Int("size", len(content)),
-		zap.String("hash", hashStr[:16]))
+		zap.String("hash", hashStr[:16]),
+		zap.Int("version", newVersion))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"path": path,
-		"size": len(content),
-		"hash": hashStr,
+		"path":    path,
+		"size":    len(content),
+		"hash":    hashStr,
+		"version": newVersion,
 	})
 }
 
@@ -541,6 +614,143 @@ func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64
 	}
 
 	return offset, length, true
+}
+
+// handleVersions handles GET /api/v1/versions/{path}
+// Without ?v= query: lists all versions.
+// With ?v=N query: downloads version N content.
+func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+	if path == "/" {
+		s.sendError(w, http.StatusBadRequest, "path required")
+		return
+	}
+
+	// Check if requesting specific version content
+	if vStr := r.URL.Query().Get("v"); vStr != "" {
+		s.handleVersionContent(w, r, path, vStr)
+		return
+	}
+
+	// List all versions
+	versions, currentVersion, err := s.storage.Metadata().ListVersions(r.Context(), path)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "file not found or no versions: "+err.Error())
+		return
+	}
+
+	resp := protocol.VersionListResponse{
+		Path:           path,
+		CurrentVersion: currentVersion,
+	}
+	for _, v := range versions {
+		resp.Versions = append(resp.Versions, protocol.VersionInfo{
+			Version:   v.Version,
+			Size:      v.Size,
+			Hash:      v.Hash,
+			CreatedAt: v.CreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// handleVersionContent serves the content of a specific version.
+func (s *Server) handleVersionContent(w http.ResponseWriter, r *http.Request, path, vStr string) {
+	version, err := strconv.Atoi(vStr)
+	if err != nil || version < 1 {
+		s.sendError(w, http.StatusBadRequest, "invalid version number")
+		return
+	}
+
+	vRecord, err := s.storage.Metadata().GetVersion(r.Context(), path, version)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "version not found: "+err.Error())
+		return
+	}
+
+	// The version content is stored at the backup key
+	versionS3Key := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), version)
+	reader, size, err := s.storage.GetContentByS3Key(r.Context(), versionS3Key)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to retrieve version content: "+err.Error())
+		return
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("X-Version", strconv.Itoa(vRecord.Version))
+	w.Header().Set("X-Version-Hash", vRecord.Hash)
+
+	n, _ := io.Copy(w, reader)
+	metrics.RecordContentDownload(n, true)
+}
+
+// handleRollback handles POST /api/v1/versions/{path}
+// Restores a file to a previous version.
+func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+	if path == "/" {
+		s.sendError(w, http.StatusBadRequest, "path required")
+		return
+	}
+
+	var req protocol.RollbackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Version < 1 {
+		s.sendError(w, http.StatusBadRequest, "version must be >= 1")
+		return
+	}
+
+	// Get current file state
+	currentRow, err := s.storage.Metadata().GetFileRow(r.Context(), path)
+	if err != nil || currentRow == nil {
+		s.sendError(w, http.StatusNotFound, "file not found: "+path)
+		return
+	}
+
+	// Save current state as a version before rollback
+	if err := s.storage.Metadata().SaveVersion(r.Context(), path); err != nil {
+		logging.Warn("failed to save pre-rollback version", zap.Error(err))
+	}
+	versionKey := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), currentRow.Version)
+	if err := s.storage.CopyObject(r.Context(), currentRow.S3Key, versionKey); err != nil {
+		logging.Warn("failed to backup pre-rollback content", zap.Error(err))
+	}
+
+	// Copy version content back to current S3 key
+	srcKey := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), req.Version)
+	if err := s.storage.CopyObject(r.Context(), srcKey, currentRow.S3Key); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to restore content: "+err.Error())
+		return
+	}
+
+	// Update file metadata with the version's info
+	newVersion := currentRow.Version + 1
+	if err := s.storage.Metadata().RestoreVersion(r.Context(), path, req.Version, newVersion, currentRow.S3Key); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to restore metadata: "+err.Error())
+		return
+	}
+
+	// Refresh tree
+	s.RefreshTree(r.Context())
+
+	logging.Info("file rolled back",
+		zap.String("path", path),
+		zap.Int("to_version", req.Version),
+		zap.Int("new_version", newVersion))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"path":            path,
+		"restored_version": req.Version,
+		"new_version":     newVersion,
+	})
 }
 
 func (s *Server) sendError(w http.ResponseWriter, code int, message string) {

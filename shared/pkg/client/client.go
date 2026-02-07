@@ -344,3 +344,133 @@ func (g *gzipReadCloser) Close() error {
 	g.gr.Close()
 	return g.body.Close()
 }
+
+// UploadResponse holds the response from an upload operation.
+type UploadResponse struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+	Hash string `json:"hash"`
+}
+
+// UploadFile uploads file content to the server.
+func (c *Client) UploadFile(ctx context.Context, path string, content io.Reader, size int64) (*UploadResponse, error) {
+	var result *UploadResponse
+
+	err := retry.Do(ctx, c.retryConfig, func() error {
+		url := c.baseURL + "/api/v1/content/" + path
+		req, err := http.NewRequestWithContext(ctx, "POST", url, content)
+		if err != nil {
+			return err
+		}
+
+		req.ContentLength = size
+		req.Header.Set("Content-Type", "application/octet-stream")
+		c.applyAuth(req)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			c.setOnline(false)
+			return retry.Retryable(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			c.setOnline(false)
+			if resp.StatusCode >= 500 {
+				return retry.Retryable(fmt.Errorf("server error: %d", resp.StatusCode))
+			}
+			// Try to read error message
+			var errResp protocol.ErrorResponse
+			if json.NewDecoder(resp.Body).Decode(&errResp) == nil {
+				return fmt.Errorf("upload failed: %s", errResp.Error)
+			}
+			return fmt.Errorf("upload failed: %d", resp.StatusCode)
+		}
+
+		c.setOnline(true)
+
+		result = &UploadResponse{}
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	return result, err
+}
+
+// CreateDirectory creates a directory on the server.
+func (c *Client) CreateDirectory(ctx context.Context, path string) error {
+	err := retry.Do(ctx, c.retryConfig, func() error {
+		url := c.baseURL + "/api/v1/tree/" + path + "?type=dir"
+		req, err := http.NewRequestWithContext(ctx, "PUT", url, nil)
+		if err != nil {
+			return err
+		}
+		c.applyAuth(req)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			c.setOnline(false)
+			return retry.Retryable(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			c.setOnline(false)
+			if resp.StatusCode >= 500 {
+				return retry.Retryable(fmt.Errorf("server error: %d", resp.StatusCode))
+			}
+			var errResp protocol.ErrorResponse
+			if json.NewDecoder(resp.Body).Decode(&errResp) == nil {
+				return fmt.Errorf("mkdir failed: %s", errResp.Error)
+			}
+			return fmt.Errorf("mkdir failed: %d", resp.StatusCode)
+		}
+
+		c.setOnline(true)
+		return nil
+	})
+
+	return err
+}
+
+// DeletePath deletes a file or directory on the server.
+func (c *Client) DeletePath(ctx context.Context, path string) error {
+	err := retry.Do(ctx, c.retryConfig, func() error {
+		url := c.baseURL + "/api/v1/tree/" + path
+		req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+		if err != nil {
+			return err
+		}
+		c.applyAuth(req)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			c.setOnline(false)
+			return retry.Retryable(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			c.setOnline(false)
+			if resp.StatusCode == http.StatusNotFound {
+				return nil // Already deleted
+			}
+			if resp.StatusCode >= 500 {
+				return retry.Retryable(fmt.Errorf("server error: %d", resp.StatusCode))
+			}
+			var errResp protocol.ErrorResponse
+			if json.NewDecoder(resp.Body).Decode(&errResp) == nil {
+				return fmt.Errorf("delete failed: %s", errResp.Error)
+			}
+			return fmt.Errorf("delete failed: %d", resp.StatusCode)
+		}
+
+		c.setOnline(true)
+		return nil
+	})
+
+	return err
+}

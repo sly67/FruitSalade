@@ -56,6 +56,12 @@ type Stats struct {
 	BytesFromCache  atomic.Int64
 	FailedFetches   atomic.Int64
 	OfflineErrors   atomic.Int64
+	BytesUploaded   atomic.Int64
+	FilesCreated    atomic.Int64
+	DirsCreated     atomic.Int64
+	FilesDeleted    atomic.Int64
+	DirsDeleted     atomic.Int64
+	Renames         atomic.Int64
 }
 
 // FruitNode represents a file or directory in the filesystem.
@@ -349,6 +355,12 @@ var _ fs.NodeOpener = (*FruitNode)(nil)
 var _ fs.NodeReader = (*FruitNode)(nil)
 var _ fs.NodeGetxattrer = (*FruitNode)(nil)
 var _ fs.NodeListxattrer = (*FruitNode)(nil)
+var _ fs.NodeCreater = (*FruitNode)(nil)
+var _ fs.NodeMkdirer = (*FruitNode)(nil)
+var _ fs.NodeUnlinker = (*FruitNode)(nil)
+var _ fs.NodeRmdirer = (*FruitNode)(nil)
+var _ fs.NodeSetattrer = (*FruitNode)(nil)
+var _ fs.NodeRenamer = (*FruitNode)(nil)
 
 // Getattr returns file attributes.
 // CRITICAL: This must NEVER trigger a content download.
@@ -435,10 +447,14 @@ func (n *FruitNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	return fs.NewListDirStream(entries), 0
 }
 
-// Open prepares a file for reading.
+// Open prepares a file for reading or writing.
 func (n *FruitNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	if n.metadata == nil || n.metadata.IsDir {
 		return nil, 0, syscall.EISDIR
+	}
+
+	if flags&(syscall.O_WRONLY|syscall.O_RDWR) != 0 {
+		return n.openForWrite(ctx, flags&syscall.O_TRUNC != 0)
 	}
 
 	fileID := n.getFileID()
@@ -492,6 +508,16 @@ func (n *FruitNode) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off
 	handle, ok := fh.(*FileHandle)
 	if !ok {
 		return nil, syscall.EIO
+	}
+
+	if handle.writable && handle.tmpFile != nil {
+		handle.mu.Lock()
+		bytesRead, err := handle.tmpFile.ReadAt(dest, off)
+		handle.mu.Unlock()
+		if err != nil && err != io.EOF {
+			return nil, syscall.EIO
+		}
+		return gofuse.ReadResultData(dest[:bytesRead]), 0
 	}
 
 	if handle.cached && handle.cachePath != "" {
@@ -684,6 +710,488 @@ type FileHandle struct {
 	node      *FruitNode
 	cachePath string
 	cached    bool
+
+	// Write support
+	mu       sync.Mutex
+	writable bool
+	dirty    bool
+	tmpFile  *os.File
+	size     int64
 }
 
 var _ fs.FileHandle = (*FileHandle)(nil)
+var _ fs.FileWriter = (*FileHandle)(nil)
+var _ fs.FileFlusher = (*FileHandle)(nil)
+var _ fs.FileReleaser = (*FileHandle)(nil)
+
+// openForWrite prepares a file for writing with a temp file buffer.
+func (n *FruitNode) openForWrite(ctx context.Context, truncate bool) (fs.FileHandle, uint32, syscall.Errno) {
+	tmpFile, err := os.CreateTemp(n.fsys.cfg.CacheDir, "fruitsalade-write-*")
+	if err != nil {
+		logger.Error("Failed to create temp file: %v", err)
+		return nil, 0, syscall.EIO
+	}
+
+	var size int64
+
+	// If not truncating, pre-load existing content
+	if !truncate && n.metadata.Size > 0 {
+		fileID := n.getFileID()
+		if cachePath, ok := n.fsys.cache.Get(fileID); ok {
+			src, err := os.Open(cachePath)
+			if err == nil {
+				size, _ = io.Copy(tmpFile, src)
+				src.Close()
+				tmpFile.Seek(0, io.SeekStart)
+			}
+		} else if n.fsys.client.IsOnline() {
+			serverID := strings.TrimPrefix(n.metadata.ID, "/")
+			reader, _, err := n.fsys.client.FetchContentFull(ctx, serverID)
+			if err == nil {
+				size, _ = io.Copy(tmpFile, reader)
+				reader.Close()
+				tmpFile.Seek(0, io.SeekStart)
+			}
+		}
+	}
+
+	return &FileHandle{
+		node:     n,
+		writable: true,
+		tmpFile:  tmpFile,
+		size:     size,
+	}, 0, 0
+}
+
+// Create creates a new file.
+func (n *FruitNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *gofuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
+	if n.metadata == nil || !n.metadata.IsDir {
+		return nil, nil, 0, syscall.ENOTDIR
+	}
+
+	n.fsys.mu.RLock()
+	for _, child := range n.metadata.Children {
+		if child.Name == name {
+			n.fsys.mu.RUnlock()
+			return nil, nil, 0, syscall.EEXIST
+		}
+	}
+	n.fsys.mu.RUnlock()
+
+	now := time.Now()
+	path := buildChildPath(n.metadata.Path, name)
+
+	childMeta := &models.FileNode{
+		ID:      path,
+		Name:    name,
+		Path:    path,
+		Size:    0,
+		ModTime: now,
+		IsDir:   false,
+	}
+
+	tmpFile, err := os.CreateTemp(n.fsys.cfg.CacheDir, "fruitsalade-write-*")
+	if err != nil {
+		logger.Error("Failed to create temp file: %v", err)
+		return nil, nil, 0, syscall.EIO
+	}
+
+	n.fsys.mu.Lock()
+	n.metadata.Children = append(n.metadata.Children, childMeta)
+	n.fsys.mu.Unlock()
+
+	childNode := &FruitNode{
+		fsys:     n.fsys,
+		metadata: childMeta,
+	}
+
+	out.Mode = 0644 | syscall.S_IFREG
+	out.Size = 0
+	out.Mtime = uint64(now.Unix())
+	out.Atime = out.Mtime
+	out.Ctime = out.Mtime
+	out.Uid = uint32(os.Getuid())
+	out.Gid = uint32(os.Getgid())
+
+	stableAttr := fs.StableAttr{Mode: out.Mode}
+	inode := n.NewInode(ctx, childNode, stableAttr)
+
+	fh := &FileHandle{
+		node:     childNode,
+		writable: true,
+		dirty:    true,
+		tmpFile:  tmpFile,
+	}
+
+	n.fsys.stats.FilesCreated.Add(1)
+	logger.Info("Created file: %s", path)
+
+	return inode, fh, 0, 0
+}
+
+// Mkdir creates a new directory.
+func (n *FruitNode) Mkdir(ctx context.Context, name string, mode uint32, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if n.metadata == nil || !n.metadata.IsDir {
+		return nil, syscall.ENOTDIR
+	}
+
+	n.fsys.mu.RLock()
+	for _, child := range n.metadata.Children {
+		if child.Name == name {
+			n.fsys.mu.RUnlock()
+			return nil, syscall.EEXIST
+		}
+	}
+	n.fsys.mu.RUnlock()
+
+	path := buildChildPath(n.metadata.Path, name)
+	serverPath := strings.TrimPrefix(path, "/")
+
+	if err := n.fsys.client.CreateDirectory(ctx, serverPath); err != nil {
+		logger.Error("Mkdir failed for %s: %v", path, err)
+		return nil, syscall.EIO
+	}
+
+	now := time.Now()
+	childMeta := &models.FileNode{
+		ID:      path,
+		Name:    name,
+		Path:    path,
+		IsDir:   true,
+		ModTime: now,
+	}
+
+	n.fsys.mu.Lock()
+	n.metadata.Children = append(n.metadata.Children, childMeta)
+	n.fsys.mu.Unlock()
+
+	childNode := &FruitNode{
+		fsys:     n.fsys,
+		metadata: childMeta,
+	}
+
+	out.Mode = 0755 | syscall.S_IFDIR
+	out.Mtime = uint64(now.Unix())
+	out.Atime = out.Mtime
+	out.Ctime = out.Mtime
+	out.Uid = uint32(os.Getuid())
+	out.Gid = uint32(os.Getgid())
+
+	stableAttr := fs.StableAttr{Mode: out.Mode}
+	n.fsys.stats.DirsCreated.Add(1)
+	logger.Info("Created directory: %s", path)
+
+	return n.NewInode(ctx, childNode, stableAttr), 0
+}
+
+// Unlink removes a file.
+func (n *FruitNode) Unlink(ctx context.Context, name string) syscall.Errno {
+	if n.metadata == nil || !n.metadata.IsDir {
+		return syscall.ENOTDIR
+	}
+
+	n.fsys.mu.RLock()
+	var target *models.FileNode
+	for _, child := range n.metadata.Children {
+		if child.Name == name {
+			target = child
+			break
+		}
+	}
+	n.fsys.mu.RUnlock()
+
+	if target == nil {
+		return syscall.ENOENT
+	}
+	if target.IsDir {
+		return syscall.EISDIR
+	}
+
+	serverPath := strings.TrimPrefix(target.Path, "/")
+	if err := n.fsys.client.DeletePath(ctx, serverPath); err != nil {
+		logger.Error("Delete failed for %s: %v", target.Path, err)
+		return syscall.EIO
+	}
+
+	cacheID := strings.ReplaceAll(target.ID, "/", "_")
+	n.fsys.cache.Evict(cacheID)
+
+	n.fsys.mu.Lock()
+	n.removeChildLocked(name)
+	n.fsys.mu.Unlock()
+
+	n.fsys.stats.FilesDeleted.Add(1)
+	logger.Info("Deleted file: %s", target.Path)
+	return 0
+}
+
+// Rmdir removes an empty directory.
+func (n *FruitNode) Rmdir(ctx context.Context, name string) syscall.Errno {
+	if n.metadata == nil || !n.metadata.IsDir {
+		return syscall.ENOTDIR
+	}
+
+	n.fsys.mu.RLock()
+	var target *models.FileNode
+	for _, child := range n.metadata.Children {
+		if child.Name == name {
+			target = child
+			break
+		}
+	}
+	n.fsys.mu.RUnlock()
+
+	if target == nil {
+		return syscall.ENOENT
+	}
+	if !target.IsDir {
+		return syscall.ENOTDIR
+	}
+	if len(target.Children) > 0 {
+		return syscall.ENOTEMPTY
+	}
+
+	serverPath := strings.TrimPrefix(target.Path, "/")
+	if err := n.fsys.client.DeletePath(ctx, serverPath); err != nil {
+		logger.Error("Rmdir failed for %s: %v", target.Path, err)
+		return syscall.EIO
+	}
+
+	n.fsys.mu.Lock()
+	n.removeChildLocked(name)
+	n.fsys.mu.Unlock()
+
+	n.fsys.stats.DirsDeleted.Add(1)
+	logger.Info("Removed directory: %s", target.Path)
+	return 0
+}
+
+// Setattr sets file attributes (handles truncate and mtime changes).
+func (n *FruitNode) Setattr(ctx context.Context, f fs.FileHandle, in *gofuse.SetAttrIn, out *gofuse.AttrOut) syscall.Errno {
+	if n.metadata == nil {
+		return syscall.ENOENT
+	}
+
+	if sz, ok := in.GetSize(); ok {
+		n.fsys.mu.Lock()
+		n.metadata.Size = int64(sz)
+		n.fsys.mu.Unlock()
+
+		if fh, ok := f.(*FileHandle); ok && fh.tmpFile != nil {
+			fh.mu.Lock()
+			fh.tmpFile.Truncate(int64(sz))
+			fh.size = int64(sz)
+			fh.dirty = true
+			fh.mu.Unlock()
+		}
+	}
+
+	if mtime, ok := in.GetMTime(); ok {
+		n.fsys.mu.Lock()
+		n.metadata.ModTime = mtime
+		n.fsys.mu.Unlock()
+	}
+
+	return n.Getattr(ctx, f, out)
+}
+
+// Rename moves a file or directory.
+func (n *FruitNode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+	n.fsys.mu.RLock()
+	var source *models.FileNode
+	for _, child := range n.metadata.Children {
+		if child.Name == name {
+			source = child
+			break
+		}
+	}
+	n.fsys.mu.RUnlock()
+
+	if source == nil {
+		return syscall.ENOENT
+	}
+
+	newParentNode, ok := newParent.(*FruitNode)
+	if !ok {
+		return syscall.EIO
+	}
+
+	// Check RENAME_NOREPLACE
+	if flags&1 != 0 {
+		n.fsys.mu.RLock()
+		for _, child := range newParentNode.metadata.Children {
+			if child.Name == newName {
+				n.fsys.mu.RUnlock()
+				return syscall.EEXIST
+			}
+		}
+		n.fsys.mu.RUnlock()
+	}
+
+	newPath := buildChildPath(newParentNode.metadata.Path, newName)
+
+	if source.IsDir {
+		if len(source.Children) > 0 {
+			logger.Error("Rename of non-empty directory not supported: %s", source.Path)
+			return syscall.ENOTSUP
+		}
+		serverNewPath := strings.TrimPrefix(newPath, "/")
+		if err := n.fsys.client.CreateDirectory(ctx, serverNewPath); err != nil {
+			logger.Error("Rename create dir failed: %v", err)
+			return syscall.EIO
+		}
+		serverOldPath := strings.TrimPrefix(source.Path, "/")
+		n.fsys.client.DeletePath(ctx, serverOldPath)
+	} else {
+		// For files: read content, upload under new path, delete old
+		var content io.ReadCloser
+		var size int64
+
+		cacheID := strings.ReplaceAll(source.ID, "/", "_")
+		if cachePath, ok := n.fsys.cache.Get(cacheID); ok {
+			f, err := os.Open(cachePath)
+			if err != nil {
+				return syscall.EIO
+			}
+			info, _ := f.Stat()
+			content = f
+			size = info.Size()
+		} else if n.fsys.client.IsOnline() {
+			serverID := strings.TrimPrefix(source.ID, "/")
+			var err error
+			content, size, err = n.fsys.client.FetchContentFull(ctx, serverID)
+			if err != nil {
+				logger.Error("Rename fetch failed: %v", err)
+				return syscall.EIO
+			}
+		} else {
+			return syscall.ENETUNREACH
+		}
+		defer content.Close()
+
+		serverNewPath := strings.TrimPrefix(newPath, "/")
+		if _, err := n.fsys.client.UploadFile(ctx, serverNewPath, content, size); err != nil {
+			logger.Error("Rename upload failed: %v", err)
+			return syscall.EIO
+		}
+
+		serverOldPath := strings.TrimPrefix(source.Path, "/")
+		n.fsys.client.DeletePath(ctx, serverOldPath)
+		n.fsys.cache.Evict(cacheID)
+	}
+
+	// Update local metadata tree
+	n.fsys.mu.Lock()
+	newParentNode.removeChildLocked(newName) // Remove existing target if any
+	n.removeChildLocked(name)
+	source.Name = newName
+	source.Path = newPath
+	source.ID = newPath
+	newParentNode.metadata.Children = append(newParentNode.metadata.Children, source)
+	n.fsys.mu.Unlock()
+
+	n.fsys.stats.Renames.Add(1)
+	logger.Info("Renamed: %s -> %s", name, newPath)
+	return 0
+}
+
+// Write writes data to the file buffer.
+func (fh *FileHandle) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
+	fh.mu.Lock()
+	defer fh.mu.Unlock()
+
+	if fh.tmpFile == nil {
+		return 0, syscall.EIO
+	}
+
+	n, err := fh.tmpFile.WriteAt(data, off)
+	if err != nil {
+		logger.Error("Write error at offset %d: %v", off, err)
+		return 0, syscall.EIO
+	}
+
+	end := off + int64(n)
+	if end > fh.size {
+		fh.size = end
+	}
+	fh.dirty = true
+
+	return uint32(n), 0
+}
+
+// Flush uploads buffered content to the server.
+func (fh *FileHandle) Flush(ctx context.Context) syscall.Errno {
+	fh.mu.Lock()
+	defer fh.mu.Unlock()
+
+	if !fh.dirty || fh.tmpFile == nil {
+		return 0
+	}
+
+	if _, err := fh.tmpFile.Seek(0, io.SeekStart); err != nil {
+		logger.Error("Flush seek error: %v", err)
+		return syscall.EIO
+	}
+
+	path := strings.TrimPrefix(fh.node.metadata.Path, "/")
+	resp, err := fh.node.fsys.client.UploadFile(ctx, path, fh.tmpFile, fh.size)
+	if err != nil {
+		logger.Error("Upload failed for %s: %v", fh.node.metadata.Path, err)
+		return syscall.EIO
+	}
+
+	// Update metadata with server response
+	fh.node.fsys.mu.Lock()
+	fh.node.metadata.Size = resp.Size
+	fh.node.metadata.Hash = resp.Hash
+	fh.node.metadata.ModTime = time.Now()
+	fh.node.fsys.mu.Unlock()
+
+	// Update cache with the written content
+	if _, err := fh.tmpFile.Seek(0, io.SeekStart); err == nil {
+		cacheID := fh.node.getFileID()
+		if cachePath, err := fh.node.fsys.cache.Put(cacheID, fh.tmpFile, fh.size); err == nil {
+			fh.cachePath = cachePath
+			fh.cached = true
+		}
+	}
+
+	fh.dirty = false
+	fh.node.fsys.stats.BytesUploaded.Add(fh.size)
+	logger.Info("Uploaded: %s (%d bytes)", fh.node.metadata.Path, fh.size)
+
+	return 0
+}
+
+// Release cleans up the file handle.
+func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
+	fh.mu.Lock()
+	defer fh.mu.Unlock()
+
+	if fh.tmpFile != nil {
+		name := fh.tmpFile.Name()
+		fh.tmpFile.Close()
+		os.Remove(name)
+		fh.tmpFile = nil
+	}
+
+	return 0
+}
+
+// removeChildLocked removes a child by name. Must be called with fsys.mu held.
+func (n *FruitNode) removeChildLocked(name string) {
+	children := n.metadata.Children
+	for i, child := range children {
+		if child.Name == name {
+			n.metadata.Children = append(children[:i], children[i+1:]...)
+			return
+		}
+	}
+}
+
+func buildChildPath(parentPath, name string) string {
+	if parentPath == "/" {
+		return "/" + name
+	}
+	return parentPath + "/" + name
+}

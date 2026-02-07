@@ -101,7 +101,7 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 	}()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key
+		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version
 		 FROM files ORDER BY path`)
 	if err != nil {
 		return nil, fmt.Errorf("query files: %w", err)
@@ -115,7 +115,7 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 	for rows.Next() {
 		var r FileRow
 		if err := rows.Scan(&r.ID, &r.Name, &r.Path, &r.ParentPath,
-			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key); err != nil {
+			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
 		allRows = append(allRows, r)
@@ -272,16 +272,17 @@ func (s *Store) UpsertFile(ctx context.Context, f *FileRow) error {
 	defer func() { metrics.RecordDBQuery("upsert_file", time.Since(start)) }()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
 		 ON CONFLICT (path) DO UPDATE SET
 			name = EXCLUDED.name,
 			size = EXCLUDED.size,
 			mod_time = EXCLUDED.mod_time,
 			hash = EXCLUDED.hash,
 			s3_key = EXCLUDED.s3_key,
+			version = EXCLUDED.version,
 			updated_at = NOW()`,
-		f.ID, f.Name, f.Path, f.ParentPath, f.Size, f.ModTime, f.IsDir, f.Hash, f.S3Key)
+		f.ID, f.Name, f.Path, f.ParentPath, f.Size, f.ModTime, f.IsDir, f.Hash, f.S3Key, f.Version)
 	if err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}
@@ -353,7 +354,119 @@ func rowToNode(r *FileRow) *models.FileNode {
 		ModTime: r.ModTime,
 		IsDir:   r.IsDir,
 		Hash:    r.Hash,
+		Version: r.Version,
 	}
+}
+
+// VersionRecord holds a file version from the file_versions table.
+type VersionRecord struct {
+	FileID    string
+	Path      string
+	Version   int
+	Size      int64
+	Hash      string
+	S3Key     string
+	CreatedAt time.Time
+}
+
+// SaveVersion saves the current file state as a version record.
+func (s *Store) SaveVersion(ctx context.Context, path string) error {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("save_version", time.Since(start)) }()
+
+	path = normalizePath(path)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO file_versions (file_id, path, version, size, hash, s3_key)
+		 SELECT id, path, version, size, hash, s3_key FROM files WHERE path = $1
+		 ON CONFLICT (path, version) DO NOTHING`,
+		path)
+	if err != nil {
+		return fmt.Errorf("save version: %w", err)
+	}
+
+	logging.Debug("saved version", zap.String("path", path))
+	return nil
+}
+
+// ListVersions returns all versions for a file path, ordered by version descending.
+func (s *Store) ListVersions(ctx context.Context, path string) ([]VersionRecord, int, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("list_versions", time.Since(start)) }()
+
+	path = normalizePath(path)
+
+	// Get current version
+	var currentVersion int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT version FROM files WHERE path = $1`, path).Scan(&currentVersion)
+	if err != nil {
+		return nil, 0, fmt.Errorf("get current version: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT file_id, path, version, size, hash, s3_key, created_at
+		 FROM file_versions WHERE path = $1 ORDER BY version DESC`, path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query versions: %w", err)
+	}
+	defer rows.Close()
+
+	var versions []VersionRecord
+	for rows.Next() {
+		var v VersionRecord
+		if err := rows.Scan(&v.FileID, &v.Path, &v.Version, &v.Size, &v.Hash, &v.S3Key, &v.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan version: %w", err)
+		}
+		versions = append(versions, v)
+	}
+
+	return versions, currentVersion, rows.Err()
+}
+
+// GetVersion returns a specific version record.
+func (s *Store) GetVersion(ctx context.Context, path string, version int) (*VersionRecord, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("get_version", time.Since(start)) }()
+
+	path = normalizePath(path)
+	var v VersionRecord
+	err := s.db.QueryRowContext(ctx,
+		`SELECT file_id, path, version, size, hash, s3_key, created_at
+		 FROM file_versions WHERE path = $1 AND version = $2`, path, version).
+		Scan(&v.FileID, &v.Path, &v.Version, &v.Size, &v.Hash, &v.S3Key, &v.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("get version %d for %s: %w", version, path, err)
+	}
+	return &v, nil
+}
+
+// RestoreVersion restores a file to a previous version's metadata.
+func (s *Store) RestoreVersion(ctx context.Context, path string, version int, newVersion int, s3Key string) error {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("restore_version", time.Since(start)) }()
+
+	path = normalizePath(path)
+	var v VersionRecord
+	err := s.db.QueryRowContext(ctx,
+		`SELECT size, hash FROM file_versions WHERE path = $1 AND version = $2`,
+		path, version).Scan(&v.Size, &v.Hash)
+	if err != nil {
+		return fmt.Errorf("get version: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE files SET size = $1, hash = $2, s3_key = $3, version = $4,
+		 mod_time = NOW(), updated_at = NOW() WHERE path = $5`,
+		v.Size, v.Hash, s3Key, newVersion, path)
+	if err != nil {
+		return fmt.Errorf("restore version: %w", err)
+	}
+
+	logging.Info("restored version",
+		zap.String("path", path),
+		zap.Int("from_version", version),
+		zap.Int("to_version", newVersion))
+	return nil
 }
 
 func normalizePath(path string) string {

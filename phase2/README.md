@@ -2,7 +2,7 @@
 
 ## Aim
 
-Extend the MVP into a full-featured production system with write support, observability, and prepare for multi-platform clients.
+Extend the MVP into a full-featured production system with write support, observability, file versioning, and conflict detection.
 
 ## Implemented Features
 
@@ -24,68 +24,66 @@ Extend the MVP into a full-featured production system with write support, observ
 - [x] Automatic parent directory creation
 - [x] Max upload size limit (configurable)
 
-### 2.3 Write Operations - FUSE Client (Pending)
-- [ ] FUSE Create operation
-- [ ] FUSE Write operation
-- [ ] FUSE Mkdir operation
-- [ ] FUSE Unlink operation
-- [ ] FUSE Rmdir operation
+### 2.3 Write Operations - FUSE Client (Complete)
+- [x] Create -- new file creation with temp file buffer
+- [x] Write -- buffered writes to temp file
+- [x] Flush -- upload to server on file close
+- [x] Mkdir -- create directory on server
+- [x] Unlink -- delete file from server + evict cache
+- [x] Rmdir -- remove empty directory from server
+- [x] Rename -- re-upload under new path + delete old
+- [x] Setattr -- truncate and mtime changes
+- [x] Open for write -- existing files opened with O_WRONLY/O_RDWR/O_TRUNC
+
+### 2.4 File Versioning (Complete)
+- [x] Automatic version history on file upload
+- [x] Version backup to S3 (`_versions/{key}/{version}`)
+- [x] List version history (`GET /api/v1/versions/{path}`)
+- [x] Download specific version content (`GET /api/v1/versions/{path}?v=N`)
+- [x] Rollback to previous version (`POST /api/v1/versions/{path}`)
+- [x] Database migration for `file_versions` table and `version` column
+
+### 2.5 Conflict Detection (Complete)
+- [x] Optimistic concurrency via `X-Expected-Version` header
+- [x] ETag-based conflict detection via `If-Match` header
+- [x] 409 Conflict response with version details
+- [x] `ETag` and `X-Version` headers on content downloads
+- [x] Default last-write-wins (backward compatible)
 
 ## Planned Features
 
-### 2.4 Versioning & Conflict Detection (Not Started)
-- [ ] Per-file version tracking in metadata
-- [ ] Conflict detection on concurrent modifications
-- [ ] Version history API
-- [ ] Rollback to previous versions
-
-### 2.5 Admin UI (Not Started)
+### 2.6 Admin UI (Not Started)
 - [ ] Admin API endpoints
 - [ ] Web UI
 
-### 2.6 Windows Client (Not Started)
+### 2.7 Windows Client (Not Started)
 - [ ] C++ CfAPI shim
 - [ ] CGO integration
 
-## Architecture
-
-```
-┌─────────────────┐     ┌─────────────────┐
-│   Main Server   │     │  Metrics Server │
-│   :8080         │     │   :9090         │
-│                 │     │   /metrics      │
-│  - /health      │     └─────────────────┘
-│  - /api/v1/*    │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │ Logging │  ← Structured JSON (zap)
-    │ Metrics │  ← Prometheus counters/histograms
-    └────┬────┘
-         │
-   ┌─────┴─────┐
-   │ PostgreSQL│ ← Metadata + Auth
-   │   MinIO   │ ← File content
-   └───────────┘
-```
-
 ## API Endpoints
 
-### Read Operations (from Phase 1)
+### Read Operations
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/health` | GET | No | Health check |
 | `/api/v1/auth/token` | POST | No | Login, get JWT |
 | `/api/v1/tree` | GET | Yes | Full metadata tree |
 | `/api/v1/tree/{path}` | GET | Yes | Subtree metadata |
-| `/api/v1/content/{id}` | GET | Yes | File content (Range supported) |
+| `/api/v1/content/{path}` | GET | Yes | File content (Range, ETag, X-Version) |
 
-### Write Operations (Phase 2)
+### Write Operations
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/api/v1/content/{path}` | POST | Yes | Upload file content |
+| `/api/v1/content/{path}` | POST | Yes | Upload file (supports X-Expected-Version, If-Match) |
 | `/api/v1/tree/{path}?type=dir` | PUT | Yes | Create directory |
 | `/api/v1/tree/{path}` | DELETE | Yes | Delete file/directory |
+
+### Version Operations
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/versions/{path}` | GET | Yes | List version history |
+| `/api/v1/versions/{path}?v=N` | GET | Yes | Download version N content |
+| `/api/v1/versions/{path}` | POST | Yes | Rollback `{"version": N}` |
 
 ### Metrics
 | Endpoint | Port | Description |
@@ -96,13 +94,13 @@ Extend the MVP into a full-featured production system with write support, observ
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `fruitsalade_http_requests_total` | Counter | Total HTTP requests by method/path/status |
+| `fruitsalade_http_requests_total` | Counter | HTTP requests by method/path/status |
 | `fruitsalade_http_request_duration_seconds` | Histogram | Request duration |
-| `fruitsalade_content_bytes_downloaded_total` | Counter | Total bytes downloaded |
-| `fruitsalade_content_bytes_uploaded_total` | Counter | Total bytes uploaded |
+| `fruitsalade_content_bytes_downloaded_total` | Counter | Bytes downloaded |
+| `fruitsalade_content_bytes_uploaded_total` | Counter | Bytes uploaded |
 | `fruitsalade_content_downloads_total` | Counter | Download count by status |
 | `fruitsalade_content_uploads_total` | Counter | Upload count by status |
-| `fruitsalade_metadata_tree_size` | Gauge | Number of files in tree |
+| `fruitsalade_metadata_tree_size` | Gauge | Files in metadata tree |
 | `fruitsalade_metadata_refresh_duration_seconds` | Histogram | Tree rebuild time |
 | `fruitsalade_auth_attempts_total` | Counter | Auth attempts by result |
 | `fruitsalade_active_tokens` | Gauge | Active JWT tokens |
@@ -113,7 +111,6 @@ Extend the MVP into a full-featured production system with write support, observ
 
 ## Configuration
 
-### Environment Variables
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LISTEN_ADDR` | `:8080` | Main server address |
@@ -128,22 +125,12 @@ Extend the MVP into a full-featured production system with write support, observ
 | `JWT_SECRET` | (required) | JWT signing secret |
 | `MAX_UPLOAD_SIZE` | `104857600` | Max upload size (100MB) |
 
-## Build & Run
+## Testing
 
 ```bash
-# Build Phase 2 server
-make phase2-server
+# Build
+make phase2
 
-# Run locally (requires PostgreSQL + MinIO)
-DATABASE_URL="postgres://..." JWT_SECRET="secret" ./bin/phase2-server
-
-# Build for Docker (uses Phase 1 Dockerfile as base)
-# TODO: Create Phase 2 Docker environment
-```
-
-## Testing Write Operations
-
-```bash
 # Get auth token
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token \
   -H "Content-Type: application/json" \
@@ -154,13 +141,30 @@ curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
   -H "Authorization: Bearer $TOKEN" \
   -d "Hello, World!"
 
-# Create a directory
-curl -X PUT "http://localhost:8080/api/v1/tree/test/subdir?type=dir" \
+# Upload again (creates version 2)
+curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "Updated content"
+
+# List versions
+curl http://localhost:8080/api/v1/versions/test/hello.txt \
   -H "Authorization: Bearer $TOKEN"
 
-# Delete a file
-curl -X DELETE http://localhost:8080/api/v1/tree/test/hello.txt \
+# Download version 1
+curl http://localhost:8080/api/v1/versions/test/hello.txt?v=1 \
   -H "Authorization: Bearer $TOKEN"
+
+# Rollback to version 1
+curl -X POST http://localhost:8080/api/v1/versions/test/hello.txt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"version": 1}'
+
+# Upload with conflict detection
+curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Expected-Version: 2" \
+  -d "This fails if version changed"
 
 # Check metrics
 curl http://localhost:9090/metrics | grep fruitsalade
