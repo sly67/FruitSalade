@@ -1,0 +1,20 @@
+FruitSalade User Guide
+
+Getting Started
+FruitSalade provides on-demand file synchronization with placeholder support.
+Files appear in your filesystem immediately but content is only downloaded when
+you actually open or read a file.
+
+How It Works
+The FUSE client mounts a virtual filesystem that shows all your files from the
+server. When you run 'ls', only metadata is fetched - no content is transferred.
+When you 'cat' or open a file, the content is fetched from S3 and cached locally.
+
+Caching
+Downloaded files are cached locally using an LRU strategy. The cache has a
+configurable maximum size. When the cache is full, the least recently used files
+are evicted to make room for new downloads.
+
+Offline Mode
+If the server becomes unavailable, cached files remain accessible. The client
+will automatically reconnect and refresh metadata when the server comes back.

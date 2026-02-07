@@ -1,0 +1,5 @@
+Quick notes:
+- Server uses PostgreSQL for metadata
+- Files stored in S3/MinIO
+- JWT tokens for authentication
+- FUSE for filesystem integration

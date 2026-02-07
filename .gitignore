@@ -1,0 +1,47 @@
+# Binaries
+bin/
+/fuse-client
+/seed-tool
+/server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Go workspace
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+
+# Cache
+.cache/
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test data (keep structure, ignore content)
+phase0/testdata/*
+!phase0/testdata/.gitkeep
+
+# Docker
+docker-compose.override.yml
