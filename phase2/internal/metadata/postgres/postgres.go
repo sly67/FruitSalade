@@ -35,6 +35,7 @@ type FileRow struct {
 	Hash       string
 	S3Key      string
 	Version    int // Phase 2: versioning support
+	OwnerID    *int // Phase 2: file ownership
 }
 
 // New creates a new PostgreSQL metadata store.
@@ -101,7 +102,7 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 	}()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version
+		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id
 		 FROM files ORDER BY path`)
 	if err != nil {
 		return nil, fmt.Errorf("query files: %w", err)
@@ -114,9 +115,14 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 
 	for rows.Next() {
 		var r FileRow
+		var ownerID sql.NullInt64
 		if err := rows.Scan(&r.ID, &r.Name, &r.Path, &r.ParentPath,
-			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version); err != nil {
+			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
+		}
+		if ownerID.Valid {
+			oid := int(ownerID.Int64)
+			r.OwnerID = &oid
 		}
 		allRows = append(allRows, r)
 		nodeMap[r.Path] = rowToNode(&r)
@@ -184,23 +190,28 @@ func (s *Store) GetMetadata(ctx context.Context, path string) (*models.FileNode,
 	return rowToNode(&r), nil
 }
 
-// GetFileRow returns the full file row for a path (including S3Key).
+// GetFileRow returns the full file row for a path (including S3Key and version).
 func (s *Store) GetFileRow(ctx context.Context, path string) (*FileRow, error) {
 	start := time.Now()
 	defer func() { metrics.RecordDBQuery("get_file_row", time.Since(start)) }()
 
 	path = normalizePath(path)
 	var r FileRow
+	var ownerID sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key
+		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id
 		 FROM files WHERE path = $1`, path).
 		Scan(&r.ID, &r.Name, &r.Path, &r.ParentPath,
-			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key)
+			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
+	}
+	if ownerID.Valid {
+		oid := int(ownerID.Int64)
+		r.OwnerID = &oid
 	}
 	return &r, nil
 }
@@ -272,8 +283,8 @@ func (s *Store) UpsertFile(ctx context.Context, f *FileRow) error {
 	defer func() { metrics.RecordDBQuery("upsert_file", time.Since(start)) }()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
 		 ON CONFLICT (path) DO UPDATE SET
 			name = EXCLUDED.name,
 			size = EXCLUDED.size,
@@ -281,8 +292,9 @@ func (s *Store) UpsertFile(ctx context.Context, f *FileRow) error {
 			hash = EXCLUDED.hash,
 			s3_key = EXCLUDED.s3_key,
 			version = EXCLUDED.version,
+			owner_id = COALESCE(files.owner_id, EXCLUDED.owner_id),
 			updated_at = NOW()`,
-		f.ID, f.Name, f.Path, f.ParentPath, f.Size, f.ModTime, f.IsDir, f.Hash, f.S3Key, f.Version)
+		f.ID, f.Name, f.Path, f.ParentPath, f.Size, f.ModTime, f.IsDir, f.Hash, f.S3Key, f.Version, f.OwnerID)
 	if err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}
@@ -346,7 +358,7 @@ func (s *Store) PathExists(ctx context.Context, path string) (bool, error) {
 }
 
 func rowToNode(r *FileRow) *models.FileNode {
-	return &models.FileNode{
+	node := &models.FileNode{
 		ID:      r.ID,
 		Name:    r.Name,
 		Path:    r.Path,
@@ -356,6 +368,10 @@ func rowToNode(r *FileRow) *models.FileNode {
 		Hash:    r.Hash,
 		Version: r.Version,
 	}
+	if r.OwnerID != nil {
+		node.OwnerID = *r.OwnerID
+	}
+	return node
 }
 
 // VersionRecord holds a file version from the file_versions table.

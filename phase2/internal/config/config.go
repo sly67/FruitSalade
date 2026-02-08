@@ -33,6 +33,11 @@ type Config struct {
 
 	// Uploads
 	MaxUploadSize int64
+
+	// Quotas (defaults for new users)
+	DefaultMaxStorage    int64
+	DefaultMaxBandwidth  int64
+	DefaultRequestsPerMin int
 }
 
 // Load reads configuration from environment variables with defaults.
@@ -50,7 +55,10 @@ func Load() (*Config, error) {
 		S3Region:      envOr("S3_REGION", "us-east-1"),
 		S3UseSSL:      envBool("S3_USE_SSL", false),
 		JWTSecret:     envOr("JWT_SECRET", ""),
-		MaxUploadSize: envInt64("MAX_UPLOAD_SIZE", 100*1024*1024), // 100MB default
+		MaxUploadSize:        envInt64("MAX_UPLOAD_SIZE", 100*1024*1024), // 100MB default
+		DefaultMaxStorage:    envInt64("DEFAULT_MAX_STORAGE", 0),        // 0 = unlimited
+		DefaultMaxBandwidth:  envInt64("DEFAULT_MAX_BANDWIDTH", 0),      // 0 = unlimited
+		DefaultRequestsPerMin: envInt("DEFAULT_REQUESTS_PER_MINUTE", 0), // 0 = unlimited
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -80,6 +88,18 @@ func envBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return b
+}
+
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return i
 }
 
 func envInt64(key string, fallback int64) int64 {

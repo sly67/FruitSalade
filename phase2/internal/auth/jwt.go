@@ -282,6 +282,87 @@ func hashToken(token string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// User represents a user account.
+type User struct {
+	ID        int       `json:"id"`
+	Username  string    `json:"username"`
+	IsAdmin   bool      `json:"is_admin"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// DB returns the underlying database connection.
+func (a *Auth) DB() *sql.DB {
+	return a.db
+}
+
+// ListUsers returns all users ordered by ID.
+func (a *Auth) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := a.db.QueryContext(ctx,
+		`SELECT id, username, is_admin, created_at FROM users ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+// DeleteUser deletes a user by ID.
+func (a *Auth) DeleteUser(ctx context.Context, userID int) error {
+	result, err := a.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	logging.Info("user deleted", zap.Int("user_id", userID))
+	return nil
+}
+
+// ChangePassword changes the password for a user.
+func (a *Auth) ChangePassword(ctx context.Context, userID int, newPassword string) error {
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	result, err := a.db.ExecContext(ctx,
+		`UPDATE users SET password = $1 WHERE id = $2`, string(hashed), userID)
+	if err != nil {
+		return fmt.Errorf("change password: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+	logging.Info("password changed", zap.Int("user_id", userID))
+	return nil
+}
+
+// UserCount returns the total number of users.
+func (a *Auth) UserCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := a.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count)
+	return count, err
+}
+
+// ActiveSessionCount returns the number of non-revoked device tokens.
+func (a *Auth) ActiveSessionCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := a.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM device_tokens WHERE revoked = FALSE`).Scan(&count)
+	return count, err
+}
+
 func sendAuthError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

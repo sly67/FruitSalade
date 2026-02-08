@@ -93,6 +93,7 @@ phase1-exec-b:
 # PHASE 2 - Production (Full Features)
 #==============================================================================
 .PHONY: phase2 phase2-server phase2-fuse phase2-windows phase2-test
+.PHONY: phase2-docker phase2-test-env phase2-test-env-down phase2-test-env-logs phase2-exec-a phase2-exec-b
 
 phase2: phase2-server phase2-fuse
 
@@ -112,6 +113,29 @@ phase2-windows:
 phase2-test:
 	@echo "Testing Phase 2..."
 	cd phase2 && go test ./...
+
+phase2-docker:
+	@echo "Building Phase 2 Docker images..."
+	docker build -t fruitsalade:phase2-server --target server -f phase2/docker/Dockerfile .
+	docker build -t fruitsalade:phase2-seed --target seed -f phase2/docker/Dockerfile .
+	docker build -t fruitsalade:phase2-fuse --target fuse-client -f phase2/docker/Dockerfile .
+
+phase2-test-env:
+	@echo "Starting Phase 2 test environment (postgres + minio + server + 2 clients)..."
+	docker compose -f phase2/docker/docker-compose.yml up -d --build
+
+phase2-test-env-down:
+	@echo "Stopping Phase 2 test environment and removing volumes..."
+	docker compose -f phase2/docker/docker-compose.yml down -v
+
+phase2-test-env-logs:
+	docker compose -f phase2/docker/docker-compose.yml logs -f
+
+phase2-exec-a:
+	docker compose -f phase2/docker/docker-compose.yml exec client-a sh
+
+phase2-exec-b:
+	docker compose -f phase2/docker/docker-compose.yml exec client-b sh
 
 #==============================================================================
 # SHARED
@@ -179,9 +203,15 @@ help:
 	@echo "  make phase1-exec-b       Shell into client-b"
 	@echo ""
 	@echo "Phase 2 (Production):"
-	@echo "  make phase2            Build server + FUSE client"
-	@echo "  make phase2-windows    Build Windows client (requires CGO)"
-	@echo "  make phase2-test       Run Phase 2 tests"
+	@echo "  make phase2              Build server + FUSE client"
+	@echo "  make phase2-windows      Build Windows client (requires CGO)"
+	@echo "  make phase2-test         Run Phase 2 tests"
+	@echo "  make phase2-docker       Build all Docker images"
+	@echo "  make phase2-test-env     Start full test env (build + up)"
+	@echo "  make phase2-test-env-down Stop test env + remove volumes"
+	@echo "  make phase2-test-env-logs Follow logs from test env"
+	@echo "  make phase2-exec-a       Shell into client-a"
+	@echo "  make phase2-exec-b       Shell into client-b"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make test              Run all tests"

@@ -346,6 +346,34 @@ func (f *FruitFS) IsOnline() bool {
 	return f.client.IsOnline()
 }
 
+// resolveMetadata returns the current metadata for this node by walking
+// the latest tree from FruitFS. This ensures that after a metadata refresh,
+// Readdir/Lookup/Getattr see the updated tree (new files, changed sizes, etc).
+func (n *FruitNode) resolveMetadata() *models.FileNode {
+	n.fsys.mu.RLock()
+	resolved := findByPath(n.fsys.metadata, n.metadata.Path)
+	n.fsys.mu.RUnlock()
+	if resolved != nil {
+		return resolved
+	}
+	return n.metadata
+}
+
+func findByPath(root *models.FileNode, path string) *models.FileNode {
+	if root == nil {
+		return nil
+	}
+	if root.Path == path {
+		return root
+	}
+	for _, child := range root.Children {
+		if found := findByPath(child, path); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 // Ensure FruitNode implements the required interfaces
 var _ fs.InodeEmbedder = (*FruitNode)(nil)
 var _ fs.NodeGetattrer = (*FruitNode)(nil)
@@ -365,35 +393,41 @@ var _ fs.NodeRenamer = (*FruitNode)(nil)
 // Getattr returns file attributes.
 // CRITICAL: This must NEVER trigger a content download.
 func (n *FruitNode) Getattr(ctx context.Context, fh fs.FileHandle, out *gofuse.AttrOut) syscall.Errno {
-	if n.metadata == nil {
+	meta := n.resolveMetadata()
+	if meta == nil {
 		return syscall.ENOENT
 	}
 
 	out.Mode = 0644
-	if n.metadata.IsDir {
+	if meta.IsDir {
 		out.Mode = 0755 | syscall.S_IFDIR
 	} else {
 		out.Mode = 0644 | syscall.S_IFREG
 	}
 
-	out.Size = uint64(n.metadata.Size)
-	out.Mtime = uint64(n.metadata.ModTime.Unix())
+	out.Size = uint64(meta.Size)
+	out.Mtime = uint64(meta.ModTime.Unix())
 	out.Atime = out.Mtime
 	out.Ctime = out.Mtime
 	out.Uid = uint32(os.Getuid())
 	out.Gid = uint32(os.Getgid())
+
+	// Short attr timeout so kernel re-checks after metadata refresh
+	out.AttrValid = 5
+	out.AttrValidNsec = 0
 
 	return 0
 }
 
 // Lookup finds a child by name.
 func (n *FruitNode) Lookup(ctx context.Context, name string, out *gofuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if n.metadata == nil || !n.metadata.IsDir {
+	meta := n.resolveMetadata()
+	if meta == nil || !meta.IsDir {
 		return nil, syscall.ENOENT
 	}
 
 	var childMeta *models.FileNode
-	for _, child := range n.metadata.Children {
+	for _, child := range meta.Children {
 		if child.Name == name {
 			childMeta = child
 			break
@@ -422,18 +456,25 @@ func (n *FruitNode) Lookup(ctx context.Context, name string, out *gofuse.EntryOu
 	out.Uid = uint32(os.Getuid())
 	out.Gid = uint32(os.Getgid())
 
+	// Short entry/attr timeout so kernel re-checks after metadata refresh
+	out.EntryValid = 5
+	out.EntryValidNsec = 0
+	out.AttrValid = 5
+	out.AttrValidNsec = 0
+
 	stableAttr := fs.StableAttr{Mode: out.Mode}
 	return n.NewInode(ctx, child, stableAttr), 0
 }
 
 // Readdir lists directory contents.
 func (n *FruitNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	if n.metadata == nil || !n.metadata.IsDir {
+	meta := n.resolveMetadata()
+	if meta == nil || !meta.IsDir {
 		return nil, syscall.ENOTDIR
 	}
 
-	entries := make([]gofuse.DirEntry, 0, len(n.metadata.Children))
-	for _, child := range n.metadata.Children {
+	entries := make([]gofuse.DirEntry, 0, len(meta.Children))
+	for _, child := range meta.Children {
 		mode := uint32(syscall.S_IFREG)
 		if child.IsDir {
 			mode = syscall.S_IFDIR
@@ -798,6 +839,10 @@ func (n *FruitNode) Create(ctx context.Context, name string, flags uint32, mode 
 
 	n.fsys.mu.Lock()
 	n.metadata.Children = append(n.metadata.Children, childMeta)
+	// Also update the FruitFS tree so resolveMetadata sees the new file
+	if treeNode := findByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
+		treeNode.Children = append(treeNode.Children, childMeta)
+	}
 	n.fsys.mu.Unlock()
 
 	childNode := &FruitNode{
@@ -819,7 +864,7 @@ func (n *FruitNode) Create(ctx context.Context, name string, flags uint32, mode 
 	fh := &FileHandle{
 		node:     childNode,
 		writable: true,
-		dirty:    true,
+		dirty:    false,
 		tmpFile:  tmpFile,
 	}
 
@@ -863,6 +908,9 @@ func (n *FruitNode) Mkdir(ctx context.Context, name string, mode uint32, out *go
 
 	n.fsys.mu.Lock()
 	n.metadata.Children = append(n.metadata.Children, childMeta)
+	if treeNode := findByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
+		treeNode.Children = append(treeNode.Children, childMeta)
+	}
 	n.fsys.mu.Unlock()
 
 	childNode := &FruitNode{
@@ -918,6 +966,9 @@ func (n *FruitNode) Unlink(ctx context.Context, name string) syscall.Errno {
 
 	n.fsys.mu.Lock()
 	n.removeChildLocked(name)
+	if treeNode := findByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
+		removeChildFromNode(treeNode, name)
+	}
 	n.fsys.mu.Unlock()
 
 	n.fsys.stats.FilesDeleted.Add(1)
@@ -959,6 +1010,9 @@ func (n *FruitNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 
 	n.fsys.mu.Lock()
 	n.removeChildLocked(name)
+	if treeNode := findByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
+		removeChildFromNode(treeNode, name)
+	}
 	n.fsys.mu.Unlock()
 
 	n.fsys.stats.DirsDeleted.Add(1)
@@ -1088,6 +1142,14 @@ func (n *FruitNode) Rename(ctx context.Context, name string, newParent fs.InodeE
 	source.Path = newPath
 	source.ID = newPath
 	newParentNode.metadata.Children = append(newParentNode.metadata.Children, source)
+	// Also update FruitFS tree
+	if treeSrc := findByPath(n.fsys.metadata, n.metadata.Path); treeSrc != nil && treeSrc != n.metadata {
+		removeChildFromNode(treeSrc, name)
+	}
+	if treeDst := findByPath(n.fsys.metadata, newParentNode.metadata.Path); treeDst != nil && treeDst != newParentNode.metadata {
+		removeChildFromNode(treeDst, newName)
+		treeDst.Children = append(treeDst.Children, source)
+	}
 	n.fsys.mu.Unlock()
 
 	n.fsys.stats.Renames.Add(1)
@@ -1128,13 +1190,11 @@ func (fh *FileHandle) Flush(ctx context.Context) syscall.Errno {
 		return 0
 	}
 
-	if _, err := fh.tmpFile.Seek(0, io.SeekStart); err != nil {
-		logger.Error("Flush seek error: %v", err)
-		return syscall.EIO
-	}
+	// Use SectionReader so UploadFile (HTTP client) doesn't close our tmpFile
+	reader := io.NewSectionReader(fh.tmpFile, 0, fh.size)
 
 	path := strings.TrimPrefix(fh.node.metadata.Path, "/")
-	resp, err := fh.node.fsys.client.UploadFile(ctx, path, fh.tmpFile, fh.size)
+	resp, err := fh.node.fsys.client.UploadFile(ctx, path, reader, fh.size)
 	if err != nil {
 		logger.Error("Upload failed for %s: %v", fh.node.metadata.Path, err)
 		return syscall.EIO
@@ -1148,12 +1208,11 @@ func (fh *FileHandle) Flush(ctx context.Context) syscall.Errno {
 	fh.node.fsys.mu.Unlock()
 
 	// Update cache with the written content
-	if _, err := fh.tmpFile.Seek(0, io.SeekStart); err == nil {
-		cacheID := fh.node.getFileID()
-		if cachePath, err := fh.node.fsys.cache.Put(cacheID, fh.tmpFile, fh.size); err == nil {
-			fh.cachePath = cachePath
-			fh.cached = true
-		}
+	cacheReader := io.NewSectionReader(fh.tmpFile, 0, fh.size)
+	cacheID := fh.node.getFileID()
+	if cachePath, err := fh.node.fsys.cache.Put(cacheID, cacheReader, fh.size); err == nil {
+		fh.cachePath = cachePath
+		fh.cached = true
 	}
 
 	fh.dirty = false
@@ -1184,6 +1243,15 @@ func (n *FruitNode) removeChildLocked(name string) {
 	for i, child := range children {
 		if child.Name == name {
 			n.metadata.Children = append(children[:i], children[i+1:]...)
+			return
+		}
+	}
+}
+
+func removeChildFromNode(node *models.FileNode, name string) {
+	for i, child := range node.Children {
+		if child.Name == name {
+			node.Children = append(node.Children[:i], node.Children[i+1:]...)
 			return
 		}
 	}

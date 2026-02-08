@@ -13,6 +13,7 @@ type FileNode struct {
 	IsDir    bool        `json:"is_dir"`
 	Hash     string      `json:"hash,omitempty"`
 	Version  int         `json:"version,omitempty"`
+	OwnerID  int         `json:"owner_id,omitempty"`
 	Children []*FileNode `json:"children,omitempty"`
 }
 

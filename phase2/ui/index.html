@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FruitSalade Admin</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav id="nav" class="hidden">
+        <div class="nav-brand">FruitSalade</div>
+        <div class="nav-links">
+            <a href="#dashboard" data-route="dashboard">Dashboard</a>
+            <a href="#users" data-route="users">Users</a>
+            <a href="#files" data-route="files">Files</a>
+            <a href="#shares" data-route="shares">Share Links</a>
+        </div>
+        <div class="nav-user">
+            <span id="nav-username"></span>
+            <button id="btn-logout" class="btn btn-sm">Logout</button>
+        </div>
+    </nav>
+    <main id="app"></main>
+
+    <script src="js/api.js"></script>
+    <script src="js/views/login.js"></script>
+    <script src="js/views/dashboard.js"></script>
+    <script src="js/views/users.js"></script>
+    <script src="js/views/files.js"></script>
+    <script src="js/views/shares.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

@@ -110,6 +110,61 @@ var (
 		},
 	)
 
+	// SSE metrics
+	sseConnectionsActive = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "fruitsalade_sse_connections_active",
+			Help: "Number of active SSE connections",
+		},
+	)
+
+	sseEventsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "fruitsalade_sse_events_total",
+			Help: "Total SSE events published",
+		},
+		[]string{"type"},
+	)
+
+	// Sharing metrics
+	shareLinksActive = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "fruitsalade_share_links_active",
+			Help: "Number of active share links",
+		},
+	)
+
+	shareDownloadsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "fruitsalade_share_downloads_total",
+			Help: "Total downloads via share links",
+		},
+	)
+
+	permissionChecksTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "fruitsalade_permission_checks_total",
+			Help: "Total permission checks",
+		},
+		[]string{"result"},
+	)
+
+	// Quota metrics
+	rateLimitHitsTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "fruitsalade_rate_limit_hits_total",
+			Help: "Total rate limit rejections (429s)",
+		},
+	)
+
+	quotaExceededTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "fruitsalade_quota_exceeded_total",
+			Help: "Total quota exceeded rejections",
+		},
+		[]string{"type"},
+	)
+
 	// S3 metrics
 	s3OperationDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -202,6 +257,45 @@ func RecordS3Operation(operation string, duration time.Duration, success bool) {
 		status = "error"
 	}
 	s3OperationsTotal.WithLabelValues(operation, status).Inc()
+}
+
+// SetSSEConnectionsActive sets the number of active SSE connections.
+func SetSSEConnectionsActive(count int64) {
+	sseConnectionsActive.Set(float64(count))
+}
+
+// RecordSSEEvent records an SSE event publication.
+func RecordSSEEvent(eventType string) {
+	sseEventsTotal.WithLabelValues(eventType).Inc()
+}
+
+// SetShareLinksActive sets the number of active share links.
+func SetShareLinksActive(count int64) {
+	shareLinksActive.Set(float64(count))
+}
+
+// RecordShareDownload records a share link download.
+func RecordShareDownload() {
+	shareDownloadsTotal.Inc()
+}
+
+// RecordPermissionCheck records a permission check result.
+func RecordPermissionCheck(allowed bool) {
+	result := "allowed"
+	if !allowed {
+		result = "denied"
+	}
+	permissionChecksTotal.WithLabelValues(result).Inc()
+}
+
+// RecordRateLimitHit records a rate limit rejection.
+func RecordRateLimitHit() {
+	rateLimitHitsTotal.Inc()
+}
+
+// RecordQuotaExceeded records a quota exceeded rejection.
+func RecordQuotaExceeded(quotaType string) {
+	quotaExceededTotal.WithLabelValues(quotaType).Inc()
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code.

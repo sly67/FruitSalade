@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -18,10 +19,14 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fruitsalade/fruitsalade/phase2/internal/auth"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/events"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/logging"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metadata/postgres"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metrics"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/quota"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/sharing"
 	s3storage "github.com/fruitsalade/fruitsalade/phase2/internal/storage/s3"
+	"github.com/fruitsalade/fruitsalade/phase2/ui"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/protocol"
 )
@@ -32,14 +37,39 @@ type Server struct {
 	auth          *auth.Auth
 	tree          *models.FileNode
 	maxUploadSize int64
+
+	// SSE
+	broadcaster *events.Broadcaster
+
+	// Sharing
+	permissions *sharing.PermissionStore
+	shareLinks  *sharing.ShareLinkStore
+
+	// Quotas
+	quotaStore  *quota.QuotaStore
+	rateLimiter *quota.RateLimiter
 }
 
 // NewServer creates a new Phase 2 server.
-func NewServer(storage *s3storage.Storage, authHandler *auth.Auth, maxUploadSize int64) *Server {
+func NewServer(
+	storage *s3storage.Storage,
+	authHandler *auth.Auth,
+	maxUploadSize int64,
+	broadcaster *events.Broadcaster,
+	permissions *sharing.PermissionStore,
+	shareLinks *sharing.ShareLinkStore,
+	quotaStore *quota.QuotaStore,
+	rateLimiter *quota.RateLimiter,
+) *Server {
 	return &Server{
 		storage:       storage,
 		auth:          authHandler,
 		maxUploadSize: maxUploadSize,
+		broadcaster:   broadcaster,
+		permissions:   permissions,
+		shareLinks:    shareLinks,
+		quotaStore:    quotaStore,
+		rateLimiter:   rateLimiter,
 	}
 }
 
@@ -87,6 +117,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /api/v1/auth/token", s.auth.HandleLogin)
 
+	// Public share link download (no auth)
+	mux.HandleFunc("GET /api/v1/share/{token}", s.handleShareDownload)
+
+	// Admin UI static files (no auth — the UI handles login via API)
+	uiFS, _ := fs.Sub(ui.Assets, ".")
+	mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(uiFS))))
+	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+	})
+
 	// Protected endpoints
 	protected := http.NewServeMux()
 
@@ -95,29 +135,118 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/tree/{path...}", s.handleSubtree)
 	protected.HandleFunc("GET /api/v1/content/{path...}", s.handleContent)
 
-	// Write endpoints (Phase 2)
+	// Write endpoints
 	protected.HandleFunc("POST /api/v1/content/{path...}", s.handleUpload)
 	protected.HandleFunc("PUT /api/v1/tree/{path...}", s.handleCreateOrUpdate)
 	protected.HandleFunc("DELETE /api/v1/tree/{path...}", s.handleDelete)
 
-	// Version endpoints (Phase 2)
-	// GET  /api/v1/versions/{path} → list versions
-	// GET  /api/v1/versions/{path}?v=N → download version content
-	// POST /api/v1/versions/{path} → rollback (body: {"version": N})
+	// Version endpoints
 	protected.HandleFunc("GET /api/v1/versions/{path...}", s.handleVersions)
 	protected.HandleFunc("POST /api/v1/versions/{path...}", s.handleRollback)
 
-	// Wrap protected routes with auth middleware
-	mux.Handle("/api/v1/", s.auth.Middleware(protected))
+	// SSE endpoint
+	protected.HandleFunc("GET /api/v1/events", s.handleEvents)
+
+	// Permission endpoints
+	protected.HandleFunc("PUT /api/v1/permissions/{path...}", s.handleSetPermission)
+	protected.HandleFunc("GET /api/v1/permissions/{path...}", s.handleListPermissions)
+	protected.HandleFunc("DELETE /api/v1/permissions/{path...}", s.handleDeletePermission)
+
+	// Share link management endpoints
+	protected.HandleFunc("POST /api/v1/share/{path...}", s.handleCreateShareLink)
+	protected.HandleFunc("DELETE /api/v1/share/{id}", s.handleRevokeShareLink)
+
+	// Admin quota endpoints
+	protected.HandleFunc("GET /api/v1/admin/quotas/{userID}", s.handleGetQuota)
+	protected.HandleFunc("PUT /api/v1/admin/quotas/{userID}", s.handleSetQuota)
+
+	// Admin UI endpoints
+	protected.HandleFunc("GET /api/v1/admin/users", s.handleListUsers)
+	protected.HandleFunc("POST /api/v1/admin/users", s.handleCreateUser)
+	protected.HandleFunc("DELETE /api/v1/admin/users/{userID}", s.handleDeleteUser)
+	protected.HandleFunc("PUT /api/v1/admin/users/{userID}/password", s.handleChangePassword)
+	protected.HandleFunc("GET /api/v1/admin/sharelinks", s.handleListShareLinks)
+	protected.HandleFunc("GET /api/v1/admin/stats", s.handleDashboardStats)
+
+	// User usage endpoint
+	protected.HandleFunc("GET /api/v1/usage", s.handleGetUsage)
+
+	// Wrap protected routes with auth then rate limiter
+	authed := s.auth.Middleware(protected)
+	getUserInfo := func(ctx context.Context) (int, int, bool) {
+		claims := auth.GetClaims(ctx)
+		if claims == nil {
+			return 0, 0, false
+		}
+		return claims.UserID, 0, true
+	}
+	rateLimited := quota.RateLimitMiddleware(s.rateLimiter, s.quotaStore, getUserInfo)(authed)
+	mux.Handle("/api/v1/", rateLimited)
 
 	// Apply logging and metrics middleware
 	return metrics.Middleware(logging.Middleware(mux))
 }
 
+// ─── Health ─────────────────────────────────────────────────────────────────
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": "phase2"})
 }
+
+// ─── SSE Events ─────────────────────────────────────────────────────────────
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.sendError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ch := s.broadcaster.Subscribe()
+	defer s.broadcaster.Unsubscribe(ch)
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := events.MarshalEvent(event)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, data)
+			flusher.Flush()
+		}
+	}
+}
+
+// publishEvent publishes an event to the broadcaster if available.
+func (s *Server) publishEvent(eventType, path string, version int, hash string, size int64) {
+	if s.broadcaster == nil {
+		return
+	}
+	s.broadcaster.Publish(events.Event{
+		Type:    eventType,
+		Path:    path,
+		Version: version,
+		Hash:    hash,
+		Size:    size,
+	})
+}
+
+// ─── Tree ───────────────────────────────────────────────────────────────────
 
 func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	if s.tree == nil {
@@ -125,7 +254,11 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := protocol.TreeResponse{Root: s.tree}
+	// Filter tree by user permissions
+	claims := auth.GetClaims(r.Context())
+	filtered := s.filterTree(r.Context(), s.tree, claims)
+
+	resp := protocol.TreeResponse{Root: filtered}
 
 	if acceptsGzip(r) {
 		w.Header().Set("Content-Type", "application/json")
@@ -153,7 +286,15 @@ func (s *Server) handleSubtree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := protocol.TreeResponse{Root: node}
+	// Check read permission
+	claims := auth.GetClaims(r.Context())
+	if claims != nil && !s.permissions.CheckAccess(r.Context(), claims.UserID, "/"+path, "read", claims.IsAdmin) {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	filtered := s.filterTree(r.Context(), node, claims)
+	resp := protocol.TreeResponse{Root: filtered}
 
 	if acceptsGzip(r) {
 		w.Header().Set("Content-Type", "application/json")
@@ -166,6 +307,48 @@ func (s *Server) handleSubtree(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// filterTree returns a copy of the tree with only nodes the user can read.
+// Admins see everything.
+func (s *Server) filterTree(ctx context.Context, node *models.FileNode, claims *auth.Claims) *models.FileNode {
+	if node == nil || claims == nil {
+		return node
+	}
+	if claims.IsAdmin {
+		return node
+	}
+
+	// Check if user can access this node
+	if !node.IsDir && !s.permissions.CheckAccess(ctx, claims.UserID, node.Path, "read", false) {
+		return nil
+	}
+
+	if !node.IsDir {
+		return node
+	}
+
+	// For directories, filter children
+	filtered := &models.FileNode{
+		ID:      node.ID,
+		Name:    node.Name,
+		Path:    node.Path,
+		Size:    node.Size,
+		ModTime: node.ModTime,
+		IsDir:   node.IsDir,
+		Hash:    node.Hash,
+		Version: node.Version,
+		OwnerID: node.OwnerID,
+	}
+
+	for _, child := range node.Children {
+		fc := s.filterTree(ctx, child, claims)
+		if fc != nil {
+			filtered.Children = append(filtered.Children, fc)
+		}
+	}
+
+	return filtered
 }
 
 func (s *Server) findNode(root *models.FileNode, path string) *models.FileNode {
@@ -188,41 +371,63 @@ func (s *Server) findNode(root *models.FileNode, path string) *models.FileNode {
 	return nil
 }
 
+// ─── Content ────────────────────────────────────────────────────────────────
+
 func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
-	fileID := r.PathValue("path")
-	if fileID == "" {
-		s.sendError(w, http.StatusBadRequest, "file ID required")
+	pathParam := r.PathValue("path")
+	if pathParam == "" {
+		s.sendError(w, http.StatusBadRequest, "file path required")
 		return
 	}
 
-	// Get total file size
-	totalSize, err := s.storage.GetContentSize(r.Context(), fileID)
-	if err != nil {
-		s.sendError(w, http.StatusNotFound, "file not found: "+fileID)
-		return
+	// Look up file - try by path first, then by ID (for FUSE client compat)
+	fullPath := "/" + pathParam
+	fileRow, _ := s.storage.Metadata().GetFileRow(r.Context(), fullPath)
+
+	// Check read permission
+	claims := auth.GetClaims(r.Context())
+	if fileRow != nil && claims != nil {
+		if !s.permissions.CheckAccess(r.Context(), claims.UserID, fullPath, "read", claims.IsAdmin) {
+			s.sendError(w, http.StatusForbidden, "access denied")
+			return
+		}
 	}
 
-	// Parse Range header
-	offset, length, hasRange := parseRangeHeader(r.Header.Get("Range"), totalSize)
+	var totalSize int64
+	var lookupID string
 
-	// Get content from S3
-	reader, _, err := s.storage.GetContent(r.Context(), fileID, offset, length)
-	if err != nil {
-		metrics.RecordContentDownload(0, false)
-		s.sendError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer reader.Close()
-
-	// Add version/ETag headers for conflict detection
-	if fileRow, err := s.storage.Metadata().GetFileRow(r.Context(), "/"+fileID); err == nil && fileRow != nil {
+	if fileRow != nil {
+		totalSize = fileRow.Size
+		lookupID = fileRow.ID
+		// Set version/ETag headers
 		if fileRow.Hash != "" {
 			w.Header().Set("ETag", `"`+fileRow.Hash+`"`)
 		}
 		if fileRow.Version > 0 {
 			w.Header().Set("X-Version", strconv.Itoa(fileRow.Version))
 		}
+	} else {
+		// Fall back to ID-based lookup (FUSE client passes file ID)
+		lookupID = pathParam
+		var err error
+		totalSize, err = s.storage.GetContentSize(r.Context(), lookupID)
+		if err != nil {
+			s.sendError(w, http.StatusNotFound, "file not found: "+pathParam)
+			return
+		}
 	}
+
+	// Parse Range header
+	offset, length, hasRange := parseRangeHeader(r.Header.Get("Range"), totalSize)
+
+	// Get content from S3
+	reader, _, err := s.storage.GetContent(r.Context(), lookupID, offset, length)
+	if err != nil {
+		metrics.RecordContentDownload(0, false)
+		s.sendError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer reader.Close()
 
 	if hasRange {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+length-1, totalSize))
@@ -235,10 +440,15 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 
 	n, _ := io.Copy(w, reader)
 	metrics.RecordContentDownload(n, true)
+
+	// Track bandwidth
+	if claims != nil {
+		s.quotaStore.TrackBandwidth(r.Context(), claims.UserID, 0, n)
+	}
 }
 
-// handleUpload handles POST /api/v1/content/{path}
-// Uploads file content to S3 and creates/updates metadata.
+// ─── Upload ─────────────────────────────────────────────────────────────────
+
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	path := "/" + r.PathValue("path")
 	if path == "/" {
@@ -246,15 +456,32 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	claims := auth.GetClaims(r.Context())
+
+	// Check write permission
+	if claims != nil && !s.permissions.CheckAccess(r.Context(), claims.UserID, path, "write", claims.IsAdmin) {
+		s.sendError(w, http.StatusForbidden, "write access denied")
+		return
+	}
+
+	// Determine effective upload size limit (per-user override or global)
+	effectiveMaxUpload := s.maxUploadSize
+	if claims != nil {
+		userLimit, err := s.quotaStore.GetUploadSizeLimit(r.Context(), claims.UserID)
+		if err == nil && userLimit > 0 {
+			effectiveMaxUpload = userLimit
+		}
+	}
+
 	// Check content length
-	if r.ContentLength > s.maxUploadSize {
+	if r.ContentLength > effectiveMaxUpload {
 		s.sendError(w, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("file too large: max %d bytes", s.maxUploadSize))
+			fmt.Sprintf("file too large: max %d bytes", effectiveMaxUpload))
 		return
 	}
 
 	// Limit reader to max upload size
-	limitedReader := io.LimitReader(r.Body, s.maxUploadSize+1)
+	limitedReader := io.LimitReader(r.Body, effectiveMaxUpload+1)
 
 	// Read content and compute hash
 	content, err := io.ReadAll(limitedReader)
@@ -264,11 +491,21 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if int64(len(content)) > s.maxUploadSize {
+	if int64(len(content)) > effectiveMaxUpload {
 		metrics.RecordContentUpload(0, false)
 		s.sendError(w, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("file too large: max %d bytes", s.maxUploadSize))
+			fmt.Sprintf("file too large: max %d bytes", effectiveMaxUpload))
 		return
+	}
+
+	// Check storage quota
+	if claims != nil {
+		ok, err := s.quotaStore.CheckStorageQuota(r.Context(), claims.UserID, int64(len(content)))
+		if err == nil && !ok {
+			metrics.RecordQuotaExceeded("storage")
+			s.sendError(w, http.StatusRequestEntityTooLarge, "storage quota exceeded")
+			return
+		}
 	}
 
 	hash := sha256.Sum256(content)
@@ -360,6 +597,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		Version:    newVersion,
 	}
 
+	// Set owner on first upload
+	if claims != nil && existingRow == nil {
+		ownerID := claims.UserID
+		fileRow.OwnerID = &ownerID
+	}
+
 	if err := s.storage.Metadata().UpsertFile(r.Context(), fileRow); err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to save metadata: "+err.Error())
 		return
@@ -368,11 +611,23 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// Refresh tree
 	s.RefreshTree(r.Context())
 
+	// Track bandwidth
+	if claims != nil {
+		s.quotaStore.TrackBandwidth(r.Context(), claims.UserID, int64(len(content)), 0)
+	}
+
 	logging.Info("file uploaded",
 		zap.String("path", path),
 		zap.Int("size", len(content)),
 		zap.String("hash", hashStr[:16]),
 		zap.Int("version", newVersion))
+
+	// Publish SSE event
+	eventType := events.EventCreate
+	if existingRow != nil {
+		eventType = events.EventModify
+	}
+	s.publishEvent(eventType, path, newVersion, hashStr, int64(len(content)))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -384,12 +639,18 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleCreateOrUpdate handles PUT /api/v1/tree/{path}
-// Creates a directory or updates file metadata.
+// ─── Create/Update ──────────────────────────────────────────────────────────
+
 func (s *Server) handleCreateOrUpdate(w http.ResponseWriter, r *http.Request) {
 	path := "/" + r.PathValue("path")
 	if path == "/" {
 		s.sendError(w, http.StatusBadRequest, "cannot modify root")
+		return
+	}
+
+	claims := auth.GetClaims(r.Context())
+	if claims != nil && !s.permissions.CheckAccess(r.Context(), claims.UserID, path, "write", claims.IsAdmin) {
+		s.sendError(w, http.StatusForbidden, "write access denied")
 		return
 	}
 
@@ -417,6 +678,11 @@ func (s *Server) handleCreateOrUpdate(w http.ResponseWriter, r *http.Request) {
 			ModTime:    time.Now(),
 		}
 
+		if claims != nil {
+			ownerID := claims.UserID
+			fileRow.OwnerID = &ownerID
+		}
+
 		if err := s.storage.Metadata().UpsertFile(r.Context(), fileRow); err != nil {
 			s.sendError(w, http.StatusInternalServerError, "failed to create directory: "+err.Error())
 			return
@@ -425,6 +691,8 @@ func (s *Server) handleCreateOrUpdate(w http.ResponseWriter, r *http.Request) {
 		s.RefreshTree(r.Context())
 
 		logging.Info("directory created", zap.String("path", path))
+
+		s.publishEvent(events.EventCreate, path, 0, "", 0)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -439,13 +707,25 @@ func (s *Server) handleCreateOrUpdate(w http.ResponseWriter, r *http.Request) {
 	s.sendError(w, http.StatusBadRequest, "use POST /api/v1/content/{path} to upload files")
 }
 
-// handleDelete handles DELETE /api/v1/tree/{path}
-// Deletes a file or directory (and all children).
+// ─── Delete ─────────────────────────────────────────────────────────────────
+
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	path := "/" + r.PathValue("path")
 	if path == "/" {
 		s.sendError(w, http.StatusBadRequest, "cannot delete root")
 		return
+	}
+
+	// Check ownership or admin
+	claims := auth.GetClaims(r.Context())
+	if claims != nil && !claims.IsAdmin {
+		ownerID, hasOwner := s.permissions.GetOwnerID(r.Context(), path)
+		if hasOwner && ownerID != claims.UserID {
+			if !s.permissions.CheckAccess(r.Context(), claims.UserID, path, "owner", false) {
+				s.sendError(w, http.StatusForbidden, "only the owner or admin can delete")
+				return
+			}
+		}
 	}
 
 	// Check if path exists
@@ -461,7 +741,6 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	if fileRow.IsDir {
 		// Delete directory and all children from S3
-		// First, list all files under this path
 		rows, err := s.storage.Metadata().ListDir(r.Context(), path)
 		if err == nil {
 			for _, row := range rows {
@@ -482,6 +761,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.RefreshTree(r.Context())
 
 		logging.Info("directory deleted", zap.String("path", path), zap.Int64("items", deleted))
+
+		s.publishEvent(events.EventDelete, path, 0, "", 0)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -505,6 +786,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 		logging.Info("file deleted", zap.String("path", path))
 
+		s.publishEvent(events.EventDelete, path, 0, "", 0)
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"path":    path,
@@ -513,7 +796,533 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ensureParentDirs creates all parent directories for a path.
+// ─── Versions ───────────────────────────────────────────────────────────────
+
+func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+	if path == "/" {
+		s.sendError(w, http.StatusBadRequest, "path required")
+		return
+	}
+
+	if vStr := r.URL.Query().Get("v"); vStr != "" {
+		s.handleVersionContent(w, r, path, vStr)
+		return
+	}
+
+	versions, currentVersion, err := s.storage.Metadata().ListVersions(r.Context(), path)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "file not found or no versions: "+err.Error())
+		return
+	}
+
+	resp := protocol.VersionListResponse{
+		Path:           path,
+		CurrentVersion: currentVersion,
+	}
+	for _, v := range versions {
+		resp.Versions = append(resp.Versions, protocol.VersionInfo{
+			Version:   v.Version,
+			Size:      v.Size,
+			Hash:      v.Hash,
+			CreatedAt: v.CreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleVersionContent(w http.ResponseWriter, r *http.Request, path, vStr string) {
+	version, err := strconv.Atoi(vStr)
+	if err != nil || version < 1 {
+		s.sendError(w, http.StatusBadRequest, "invalid version number")
+		return
+	}
+
+	vRecord, err := s.storage.Metadata().GetVersion(r.Context(), path, version)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "version not found: "+err.Error())
+		return
+	}
+
+	versionS3Key := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), version)
+	reader, size, err := s.storage.GetContentByS3Key(r.Context(), versionS3Key)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to retrieve version content: "+err.Error())
+		return
+	}
+	defer reader.Close()
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("X-Version", strconv.Itoa(vRecord.Version))
+	w.Header().Set("X-Version-Hash", vRecord.Hash)
+
+	n, _ := io.Copy(w, reader)
+	metrics.RecordContentDownload(n, true)
+}
+
+func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+	if path == "/" {
+		s.sendError(w, http.StatusBadRequest, "path required")
+		return
+	}
+
+	var req protocol.RollbackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Version < 1 {
+		s.sendError(w, http.StatusBadRequest, "version must be >= 1")
+		return
+	}
+
+	currentRow, err := s.storage.Metadata().GetFileRow(r.Context(), path)
+	if err != nil || currentRow == nil {
+		s.sendError(w, http.StatusNotFound, "file not found: "+path)
+		return
+	}
+
+	// Save current state as a version before rollback
+	if err := s.storage.Metadata().SaveVersion(r.Context(), path); err != nil {
+		logging.Warn("failed to save pre-rollback version", zap.Error(err))
+	}
+	versionKey := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), currentRow.Version)
+	if err := s.storage.CopyObject(r.Context(), currentRow.S3Key, versionKey); err != nil {
+		logging.Warn("failed to backup pre-rollback content", zap.Error(err))
+	}
+
+	// Copy version content back to current S3 key
+	srcKey := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), req.Version)
+	if err := s.storage.CopyObject(r.Context(), srcKey, currentRow.S3Key); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to restore content: "+err.Error())
+		return
+	}
+
+	newVersion := currentRow.Version + 1
+	if err := s.storage.Metadata().RestoreVersion(r.Context(), path, req.Version, newVersion, currentRow.S3Key); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to restore metadata: "+err.Error())
+		return
+	}
+
+	s.RefreshTree(r.Context())
+
+	logging.Info("file rolled back",
+		zap.String("path", path),
+		zap.Int("to_version", req.Version),
+		zap.Int("new_version", newVersion))
+
+	s.publishEvent(events.EventVersion, path, newVersion, "", 0)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"path":             path,
+		"restored_version": req.Version,
+		"new_version":      newVersion,
+	})
+}
+
+// ─── Permissions ────────────────────────────────────────────────────────────
+
+func (s *Server) handleSetPermission(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Only owner or admin can set permissions
+	if !claims.IsAdmin {
+		ownerID, hasOwner := s.permissions.GetOwnerID(r.Context(), path)
+		if !hasOwner || ownerID != claims.UserID {
+			s.sendError(w, http.StatusForbidden, "only the owner or admin can manage permissions")
+			return
+		}
+	}
+
+	var req protocol.PermissionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.UserID == 0 {
+		s.sendError(w, http.StatusBadRequest, "user_id required")
+		return
+	}
+	if req.Permission != "read" && req.Permission != "write" && req.Permission != "owner" {
+		s.sendError(w, http.StatusBadRequest, "permission must be 'read', 'write', or 'owner'")
+		return
+	}
+
+	if err := s.permissions.SetPermission(r.Context(), req.UserID, path, req.Permission); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to set permission: "+err.Error())
+		return
+	}
+
+	logging.Info("permission set",
+		zap.String("path", path),
+		zap.Int("user_id", req.UserID),
+		zap.String("permission", req.Permission))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"path":       path,
+		"user_id":    req.UserID,
+		"permission": req.Permission,
+	})
+}
+
+func (s *Server) handleListPermissions(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Only owner or admin can list permissions
+	if !claims.IsAdmin {
+		ownerID, hasOwner := s.permissions.GetOwnerID(r.Context(), path)
+		if !hasOwner || ownerID != claims.UserID {
+			s.sendError(w, http.StatusForbidden, "only the owner or admin can view permissions")
+			return
+		}
+	}
+
+	perms, err := s.permissions.ListPermissions(r.Context(), path)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to list permissions: "+err.Error())
+		return
+	}
+
+	resp := protocol.PermissionListResponse{Path: path}
+	for _, p := range perms {
+		resp.Permissions = append(resp.Permissions, protocol.PermissionResponse{
+			UserID:     p.UserID,
+			Username:   p.Username,
+			Path:       p.Path,
+			Permission: p.Permission,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleDeletePermission(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	if !claims.IsAdmin {
+		ownerID, hasOwner := s.permissions.GetOwnerID(r.Context(), path)
+		if !hasOwner || ownerID != claims.UserID {
+			s.sendError(w, http.StatusForbidden, "only the owner or admin can manage permissions")
+			return
+		}
+	}
+
+	userIDStr := r.URL.Query().Get("user_id")
+	if userIDStr == "" {
+		s.sendError(w, http.StatusBadRequest, "user_id query parameter required")
+		return
+	}
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid user_id")
+		return
+	}
+
+	if err := s.permissions.RemovePermission(r.Context(), userID, path); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to remove permission: "+err.Error())
+		return
+	}
+
+	logging.Info("permission removed", zap.String("path", path), zap.Int("user_id", userID))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"path":    path,
+		"user_id": userID,
+		"removed": true,
+	})
+}
+
+// ─── Share Links ────────────────────────────────────────────────────────────
+
+func (s *Server) handleCreateShareLink(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Need at least read access to share
+	if !s.permissions.CheckAccess(r.Context(), claims.UserID, path, "read", claims.IsAdmin) {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var req protocol.ShareLinkRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.sendError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+
+	link, err := s.shareLinks.Create(r.Context(), path, claims.UserID, req.Password, req.ExpiresInSec, req.MaxDownloads)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to create share link: "+err.Error())
+		return
+	}
+
+	// Build share URL from the request host
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	shareURL := fmt.Sprintf("%s://%s/api/v1/share/%s", scheme, r.Host, link.ID)
+
+	logging.Info("share link created",
+		zap.String("path", path),
+		zap.String("link_id", link.ID))
+
+	resp := protocol.ShareLinkResponse{
+		ID:           link.ID,
+		Path:         link.Path,
+		URL:          shareURL,
+		ExpiresAt:    link.ExpiresAt,
+		MaxDownloads: link.MaxDownloads,
+		CreatedAt:    link.CreatedAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleShareDownload(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if token == "" {
+		s.sendError(w, http.StatusBadRequest, "share token required")
+		return
+	}
+
+	password := r.URL.Query().Get("password")
+
+	link, err := s.shareLinks.Validate(r.Context(), token, password)
+	if err != nil {
+		s.sendError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	// Get file metadata
+	fileRow, err := s.storage.Metadata().GetFileRow(r.Context(), link.Path)
+	if err != nil || fileRow == nil {
+		s.sendError(w, http.StatusNotFound, "shared file not found")
+		return
+	}
+
+	// Get content from S3
+	reader, size, err := s.storage.GetContent(r.Context(), fileRow.ID, 0, fileRow.Size)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to retrieve content: "+err.Error())
+		return
+	}
+	defer reader.Close()
+
+	// Increment download count
+	s.shareLinks.IncrementDownloads(r.Context(), token)
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(link.Path)))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.WriteHeader(http.StatusOK)
+
+	n, _ := io.Copy(w, reader)
+	metrics.RecordContentDownload(n, true)
+}
+
+func (s *Server) handleRevokeShareLink(w http.ResponseWriter, r *http.Request) {
+	linkID := r.PathValue("id")
+	if linkID == "" {
+		s.sendError(w, http.StatusBadRequest, "share link ID required")
+		return
+	}
+
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Check ownership
+	link, err := s.shareLinks.GetByID(r.Context(), linkID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "share link not found")
+		return
+	}
+	if !claims.IsAdmin && link.CreatedBy != claims.UserID {
+		s.sendError(w, http.StatusForbidden, "only the creator or admin can revoke")
+		return
+	}
+
+	if err := s.shareLinks.Revoke(r.Context(), linkID); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to revoke: "+err.Error())
+		return
+	}
+
+	logging.Info("share link revoked", zap.String("link_id", linkID))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":      linkID,
+		"revoked": true,
+	})
+}
+
+// ─── Quotas ─────────────────────────────────────────────────────────────────
+
+func (s *Server) handleGetQuota(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	userID, err := strconv.Atoi(r.PathValue("userID"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	q, err := s.quotaStore.GetQuota(r.Context(), userID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get quota: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(protocol.UserQuotaResponse{
+		UserID:             q.UserID,
+		MaxStorageBytes:    q.MaxStorageBytes,
+		MaxBandwidthPerDay: q.MaxBandwidthPerDay,
+		MaxRequestsPerMin:  q.MaxRequestsPerMin,
+		MaxUploadSizeBytes: q.MaxUploadSizeBytes,
+	})
+}
+
+func (s *Server) handleSetQuota(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	userID, err := strconv.Atoi(r.PathValue("userID"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var req protocol.SetQuotaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Get current quota to merge
+	current, err := s.quotaStore.GetQuota(r.Context(), userID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get current quota: "+err.Error())
+		return
+	}
+
+	if req.MaxStorageBytes != nil {
+		current.MaxStorageBytes = *req.MaxStorageBytes
+	}
+	if req.MaxBandwidthPerDay != nil {
+		current.MaxBandwidthPerDay = *req.MaxBandwidthPerDay
+	}
+	if req.MaxRequestsPerMin != nil {
+		current.MaxRequestsPerMin = *req.MaxRequestsPerMin
+	}
+	if req.MaxUploadSizeBytes != nil {
+		current.MaxUploadSizeBytes = *req.MaxUploadSizeBytes
+	}
+
+	if err := s.quotaStore.SetQuota(r.Context(), current); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to set quota: "+err.Error())
+		return
+	}
+
+	logging.Info("quota set", zap.Int("user_id", userID))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(protocol.UserQuotaResponse{
+		UserID:             current.UserID,
+		MaxStorageBytes:    current.MaxStorageBytes,
+		MaxBandwidthPerDay: current.MaxBandwidthPerDay,
+		MaxRequestsPerMin:  current.MaxRequestsPerMin,
+		MaxUploadSizeBytes: current.MaxUploadSizeBytes,
+	})
+}
+
+func (s *Server) handleGetUsage(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	q, err := s.quotaStore.GetQuota(r.Context(), claims.UserID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get quota: "+err.Error())
+		return
+	}
+
+	storageUsed, err := s.quotaStore.GetStorageUsed(r.Context(), claims.UserID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get storage usage: "+err.Error())
+		return
+	}
+
+	bIn, bOut, err := s.quotaStore.GetBandwidthToday(r.Context(), claims.UserID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get bandwidth: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(protocol.UsageResponse{
+		UserID:         claims.UserID,
+		StorageUsed:    storageUsed,
+		BandwidthToday: bIn + bOut,
+		Quota: protocol.UserQuotaResponse{
+			UserID:             q.UserID,
+			MaxStorageBytes:    q.MaxStorageBytes,
+			MaxBandwidthPerDay: q.MaxBandwidthPerDay,
+			MaxRequestsPerMin:  q.MaxRequestsPerMin,
+			MaxUploadSizeBytes: q.MaxUploadSizeBytes,
+		},
+	})
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
 func (s *Server) ensureParentDirs(ctx context.Context, path string) error {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) <= 1 {
@@ -614,143 +1423,6 @@ func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64
 	}
 
 	return offset, length, true
-}
-
-// handleVersions handles GET /api/v1/versions/{path}
-// Without ?v= query: lists all versions.
-// With ?v=N query: downloads version N content.
-func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
-	path := "/" + r.PathValue("path")
-	if path == "/" {
-		s.sendError(w, http.StatusBadRequest, "path required")
-		return
-	}
-
-	// Check if requesting specific version content
-	if vStr := r.URL.Query().Get("v"); vStr != "" {
-		s.handleVersionContent(w, r, path, vStr)
-		return
-	}
-
-	// List all versions
-	versions, currentVersion, err := s.storage.Metadata().ListVersions(r.Context(), path)
-	if err != nil {
-		s.sendError(w, http.StatusNotFound, "file not found or no versions: "+err.Error())
-		return
-	}
-
-	resp := protocol.VersionListResponse{
-		Path:           path,
-		CurrentVersion: currentVersion,
-	}
-	for _, v := range versions {
-		resp.Versions = append(resp.Versions, protocol.VersionInfo{
-			Version:   v.Version,
-			Size:      v.Size,
-			Hash:      v.Hash,
-			CreatedAt: v.CreatedAt,
-		})
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-// handleVersionContent serves the content of a specific version.
-func (s *Server) handleVersionContent(w http.ResponseWriter, r *http.Request, path, vStr string) {
-	version, err := strconv.Atoi(vStr)
-	if err != nil || version < 1 {
-		s.sendError(w, http.StatusBadRequest, "invalid version number")
-		return
-	}
-
-	vRecord, err := s.storage.Metadata().GetVersion(r.Context(), path, version)
-	if err != nil {
-		s.sendError(w, http.StatusNotFound, "version not found: "+err.Error())
-		return
-	}
-
-	// The version content is stored at the backup key
-	versionS3Key := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), version)
-	reader, size, err := s.storage.GetContentByS3Key(r.Context(), versionS3Key)
-	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, "failed to retrieve version content: "+err.Error())
-		return
-	}
-	defer reader.Close()
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("X-Version", strconv.Itoa(vRecord.Version))
-	w.Header().Set("X-Version-Hash", vRecord.Hash)
-
-	n, _ := io.Copy(w, reader)
-	metrics.RecordContentDownload(n, true)
-}
-
-// handleRollback handles POST /api/v1/versions/{path}
-// Restores a file to a previous version.
-func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
-	path := "/" + r.PathValue("path")
-	if path == "/" {
-		s.sendError(w, http.StatusBadRequest, "path required")
-		return
-	}
-
-	var req protocol.RollbackRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.sendError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.Version < 1 {
-		s.sendError(w, http.StatusBadRequest, "version must be >= 1")
-		return
-	}
-
-	// Get current file state
-	currentRow, err := s.storage.Metadata().GetFileRow(r.Context(), path)
-	if err != nil || currentRow == nil {
-		s.sendError(w, http.StatusNotFound, "file not found: "+path)
-		return
-	}
-
-	// Save current state as a version before rollback
-	if err := s.storage.Metadata().SaveVersion(r.Context(), path); err != nil {
-		logging.Warn("failed to save pre-rollback version", zap.Error(err))
-	}
-	versionKey := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), currentRow.Version)
-	if err := s.storage.CopyObject(r.Context(), currentRow.S3Key, versionKey); err != nil {
-		logging.Warn("failed to backup pre-rollback content", zap.Error(err))
-	}
-
-	// Copy version content back to current S3 key
-	srcKey := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), req.Version)
-	if err := s.storage.CopyObject(r.Context(), srcKey, currentRow.S3Key); err != nil {
-		s.sendError(w, http.StatusInternalServerError, "failed to restore content: "+err.Error())
-		return
-	}
-
-	// Update file metadata with the version's info
-	newVersion := currentRow.Version + 1
-	if err := s.storage.Metadata().RestoreVersion(r.Context(), path, req.Version, newVersion, currentRow.S3Key); err != nil {
-		s.sendError(w, http.StatusInternalServerError, "failed to restore metadata: "+err.Error())
-		return
-	}
-
-	// Refresh tree
-	s.RefreshTree(r.Context())
-
-	logging.Info("file rolled back",
-		zap.String("path", path),
-		zap.Int("to_version", req.Version),
-		zap.Int("new_version", newVersion))
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"path":            path,
-		"restored_version": req.Version,
-		"new_version":     newVersion,
-	})
 }
 
 func (s *Server) sendError(w http.ResponseWriter, code int, message string) {

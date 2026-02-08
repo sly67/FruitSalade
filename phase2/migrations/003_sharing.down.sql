@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS share_links;
+DROP TABLE IF EXISTS file_permissions;
+ALTER TABLE files DROP COLUMN IF EXISTS owner_id;

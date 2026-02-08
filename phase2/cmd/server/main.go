@@ -1,10 +1,12 @@
 // Phase 2 Server - Production Features
 //
 // Extends Phase 1 with:
-// - Prometheus metrics
-// - Structured logging (zap)
+// - Prometheus metrics & structured logging (zap)
 // - File upload/create/delete endpoints
-// - Separate metrics server
+// - File versioning & conflict detection
+// - SSE real-time sync
+// - File sharing (ACLs + share links)
+// - Rate limiting & user quotas
 package main
 
 import (
@@ -18,9 +20,12 @@ import (
 	"github.com/fruitsalade/fruitsalade/phase2/internal/api"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/auth"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/config"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/events"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/logging"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metadata/postgres"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metrics"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/quota"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/sharing"
 	s3storage "github.com/fruitsalade/fruitsalade/phase2/internal/storage/s3"
 	"go.uber.org/zap"
 )
@@ -87,8 +92,27 @@ func main() {
 		logging.Error("failed to ensure default admin", zap.Error(err))
 	}
 
+	// Initialize SSE broadcaster
+	broadcaster := events.NewBroadcaster()
+	logging.Info("SSE broadcaster initialized")
+
+	// Initialize sharing stores
+	db := metaStore.DB()
+	permissionStore := sharing.NewPermissionStore(db)
+	shareLinkStore := sharing.NewShareLinkStore(db)
+	logging.Info("sharing stores initialized")
+
+	// Initialize quota store and rate limiter
+	quotaStore := quota.NewQuotaStore(db)
+	rateLimiter := quota.NewRateLimiter(quotaStore)
+	logging.Info("quota and rate limiter initialized")
+
 	// Create API server
-	srv := api.NewServer(storage, authHandler, cfg.MaxUploadSize)
+	srv := api.NewServer(
+		storage, authHandler, cfg.MaxUploadSize,
+		broadcaster, permissionStore, shareLinkStore,
+		quotaStore, rateLimiter,
+	)
 	if err := srv.Init(ctx); err != nil {
 		logging.Fatal("server init failed", zap.Error(err))
 	}

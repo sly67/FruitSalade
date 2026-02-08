@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: |
+            shared/go.sum
+            phase0/go.sum
+            phase1/go.sum
+            phase2/go.sum
+      - name: Vet shared
+        run: cd shared && go vet ./...
+      - name: Vet phase0
+        run: cd phase0 && go vet ./...
+      - name: Vet phase1
+        run: cd phase1 && go vet ./...
+      - name: Vet phase2
+        run: cd phase2 && go vet ./...
+
+  test-unit:
+    name: Test (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [shared, phase0, phase1, phase2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: Run unit tests
+        run: cd ${{ matrix.module }} && go test -short -count=1 ./...
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fruitsalade
+          POSTGRES_PASSWORD: fruitsalade
+          POSTGRES_DB: fruitsalade_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fruitsalade"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "mc ready local || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: phase2/go.sum
+      - name: Create MinIO bucket
+        run: |
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
+          chmod +x /usr/local/bin/mc
+          mc alias set local http://localhost:9000 minioadmin minioadmin
+          mc mb local/fruitsalade-test
+      - name: Run integration tests
+        env:
+          TEST_DATABASE_URL: "postgres://fruitsalade:fruitsalade@localhost:5432/fruitsalade_test?sslmode=disable"
+          TEST_S3_ENDPOINT: "http://localhost:9000"
+        run: cd phase2 && go test -v -count=1 ./internal/api/
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: |
+            shared/go.sum
+            phase0/go.sum
+            phase1/go.sum
+            phase2/go.sum
+      - name: Build Phase 0
+        run: |
+          cd phase0 && go build -o ../bin/phase0-server ./cmd/server
+          cd ../phase0 && go build -o ../bin/phase0-fuse ./cmd/fuse-client
+      - name: Build Phase 1
+        run: |
+          cd phase1 && go build -o ../bin/phase1-server ./cmd/server
+          cd ../phase1 && go build -o ../bin/phase1-fuse ./cmd/fuse-client
+      - name: Build Phase 2
+        run: |
+          cd phase2 && go build -o ../bin/phase2-server ./cmd/server
+          cd ../phase2 && go build -o ../bin/phase2-fuse ./cmd/fuse-client
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: bin/
+          retention-days: 7
