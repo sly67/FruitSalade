@@ -50,13 +50,48 @@ Extend the MVP into a full-featured production system with write support, observ
 - [x] `ETag` and `X-Version` headers on content downloads
 - [x] Default last-write-wins (backward compatible)
 
+### 2.6 SSE Real-Time Sync (Complete)
+- [x] `events.Broadcaster` with subscribe/unsubscribe/publish
+- [x] SSE endpoint (`GET /api/v1/events`)
+- [x] Events published from upload, create, delete, and rollback handlers
+- [x] FUSE client `--watch` flag for live metadata refresh
+
+### 2.7 File Sharing (Complete)
+- [x] ACL-based permissions (`file_permissions` table)
+- [x] Path inheritance (permission on `/docs` applies to `/docs/sub/file.txt`)
+- [x] Permission levels: read, write, owner (hierarchical)
+- [x] Share links with optional password (bcrypt), expiry, and download limits
+- [x] Public download endpoint (`GET /api/v1/share/{token}`)
+- [x] Database migrations (`003_sharing`)
+
+### 2.8 Rate Limiting & Quotas (Complete)
+- [x] Per-user quotas: storage, bandwidth/day, requests/min, upload size
+- [x] In-memory token bucket rate limiter
+- [x] Daily bandwidth tracking (`bandwidth_usage` table)
+- [x] Middleware chain: metrics -> logging -> mux -> auth -> rateLimiter -> handler
+- [x] Database migrations (`004_quotas`)
+
+### 2.9 Admin UI (Complete)
+- [x] Vanilla HTML/CSS/JS embedded via `go:embed` (no build step)
+- [x] Served at `/admin/` with hash-based SPA routing
+- [x] Login with admin-only access check
+- [x] Dashboard: user count, sessions, files, storage, share links
+- [x] Users: list, create, delete, change password
+- [x] Files: browse metadata tree with breadcrumb navigation
+- [x] Share Links: list all with revoke action
+- [x] Admin API endpoints (`/api/v1/admin/{users,sharelinks,stats}`)
+
+### 2.10 CI Pipeline (Complete)
+- [x] GitHub Actions workflow (lint, test, build, Docker)
+
+### 2.11 Docker Environment (Complete)
+- [x] Docker Compose with server, PostgreSQL, MinIO, 2 FUSE clients
+- [x] Dockerfile with multi-stage build
+- [x] Automated database seeding and migration
+
 ## Planned Features
 
-### 2.6 Admin UI (Not Started)
-- [ ] Admin API endpoints
-- [ ] Web UI
-
-### 2.7 Windows Client (Not Started)
+### Windows Client (Not Started)
 - [ ] C++ CfAPI shim
 - [ ] CGO integration
 
@@ -85,6 +120,43 @@ Extend the MVP into a full-featured production system with write support, observ
 | `/api/v1/versions/{path}?v=N` | GET | Yes | Download version N content |
 | `/api/v1/versions/{path}` | POST | Yes | Rollback `{"version": N}` |
 
+### SSE Events
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/events` | GET | Yes | SSE stream (create, modify, delete, version events) |
+
+### Permissions
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/permissions/{path}` | PUT | Yes | Set permission `{user_id, permission}` |
+| `/api/v1/permissions/{path}` | GET | Yes | List permissions |
+| `/api/v1/permissions/{path}?user_id=N` | DELETE | Yes | Remove permission |
+
+### Share Links
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/share/{path}` | POST | Yes | Create link `{password?, expires_in_sec?, max_downloads?}` |
+| `/api/v1/share/{id}` | DELETE | Yes | Revoke link |
+| `/api/v1/share/{token}` | GET | No | Download via link (public) |
+
+### Quotas
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/usage` | GET | Yes | Current user's usage |
+| `/api/v1/admin/quotas/{userID}` | GET | Admin | Get user quota |
+| `/api/v1/admin/quotas/{userID}` | PUT | Admin | Set user quota |
+
+### Admin
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/admin/users` | GET | Admin | List users |
+| `/api/v1/admin/users` | POST | Admin | Create user `{username, password, is_admin}` |
+| `/api/v1/admin/users/{id}` | DELETE | Admin | Delete user |
+| `/api/v1/admin/users/{id}/password` | PUT | Admin | Change password `{password}` |
+| `/api/v1/admin/sharelinks` | GET | Admin | List share links (`?active=true`) |
+| `/api/v1/admin/stats` | GET | Admin | Dashboard stats |
+| `/admin/` | - | - | Admin web UI (auth in-app) |
+
 ### Metrics
 | Endpoint | Port | Description |
 |----------|------|-------------|
@@ -108,6 +180,11 @@ Extend the MVP into a full-featured production system with write support, observ
 | `fruitsalade_db_connections_open` | Gauge | Open DB connections |
 | `fruitsalade_s3_operation_duration_seconds` | Histogram | S3 operation duration |
 | `fruitsalade_s3_operations_total` | Counter | S3 operations by type/status |
+| `fruitsalade_permission_checks_total` | Counter | Permission checks by result |
+| `fruitsalade_share_downloads_total` | Counter | Share link downloads |
+| `fruitsalade_share_links_active` | Gauge | Active share links |
+| `fruitsalade_quota_exceeded_total` | Counter | Quota exceeded events by type |
+| `fruitsalade_rate_limited_total` | Counter | Rate-limited requests |
 
 ## Configuration
 
@@ -168,4 +245,42 @@ curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
 
 # Check metrics
 curl http://localhost:9090/metrics | grep fruitsalade
+
+# ─── Sharing ───────────────────────────────────────────────────────────
+
+# Create a share link
+curl -X POST http://localhost:8080/api/v1/share/test/hello.txt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"max_downloads": 5}'
+
+# ─── Admin ─────────────────────────────────────────────────────────────
+
+# List users
+curl http://localhost:8080/api/v1/admin/users \
+  -H "Authorization: Bearer $TOKEN"
+
+# Create user
+curl -X POST http://localhost:8080/api/v1/admin/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"bob","password":"secret","is_admin":false}'
+
+# Dashboard stats
+curl http://localhost:8080/api/v1/admin/stats \
+  -H "Authorization: Bearer $TOKEN"
+
+# ─── Admin UI ──────────────────────────────────────────────────────────
+# Open http://localhost:8080/admin/ in a browser
+# Login with admin/admin
+```
+
+## Docker Test Environment
+
+```bash
+# Start Phase 2 environment (server + postgres + minio + 2 FUSE clients)
+make phase2-test-env
+
+# Stop
+make phase2-test-env-down
 ```

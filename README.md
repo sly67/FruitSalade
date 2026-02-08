@@ -16,6 +16,10 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **JWT authentication** -- per-device tokens with revocation support
 - **Observability** -- Prometheus metrics + structured JSON logging (zap)
 - **S3 backend** -- content stored in S3/MinIO, metadata in PostgreSQL
+- **File sharing** -- ACL-based permissions with path inheritance + share links (password, expiry, download limits)
+- **Rate limiting & quotas** -- per-user storage, bandwidth, RPM, and upload size limits
+- **Admin dashboard** -- embedded web UI at `/admin/` for managing users, files, and share links
+- **CI pipeline** -- GitHub Actions (lint, test, build, Docker)
 - **Docker-ready** -- full test environment with compose (server, 2 FUSE clients, PostgreSQL, MinIO)
 
 ## Architecture
@@ -150,6 +154,48 @@ Content responses include `ETag` (SHA256 hash) and `X-Version` headers.
 | `/api/v1/versions/{path}?v=N` | GET | Download version N content |
 | `/api/v1/versions/{path}` | POST | Rollback to version `{"version": N}` |
 
+### Permissions
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/permissions/{path}` | PUT | Set permission `{user_id, permission}` (read/write/owner) |
+| `/api/v1/permissions/{path}` | GET | List permissions for path |
+| `/api/v1/permissions/{path}?user_id=N` | DELETE | Remove user's permission |
+
+### Share Links
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/share/{path}` | POST | Create share link `{password?, expires_in_sec?, max_downloads?}` |
+| `/api/v1/share/{id}` | DELETE | Revoke share link |
+| `/api/v1/share/{token}` | GET | Download via share link (public, no auth) |
+
+### Events
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/events` | GET | SSE stream of file change events |
+
+### Quotas
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/usage` | GET | Current user's storage/bandwidth usage |
+| `/api/v1/admin/quotas/{userID}` | GET | Get user quota (admin) |
+| `/api/v1/admin/quotas/{userID}` | PUT | Set user quota (admin) |
+
+### Admin
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/admin/users` | GET | List all users (admin) |
+| `/api/v1/admin/users` | POST | Create user `{username, password, is_admin}` (admin) |
+| `/api/v1/admin/users/{id}` | DELETE | Delete user (admin) |
+| `/api/v1/admin/users/{id}/password` | PUT | Change password `{password}` (admin) |
+| `/api/v1/admin/sharelinks` | GET | List all share links (admin) |
+| `/api/v1/admin/stats` | GET | Dashboard stats (admin) |
+| `/admin/` | - | Admin web UI |
+
 ### Conflict Detection
 
 Upload requests can include concurrency control headers:
@@ -182,10 +228,11 @@ make phase0              # Build Phase 0 (PoC)
 make phase1              # Build Phase 1 (MVP)
 make phase2              # Build Phase 2 (Production)
 
-make phase1-test-env     # Full Docker test environment
-make phase1-test-env-down # Stop and remove volumes
-make phase1-exec-a       # Shell into client-a container
-make phase1-exec-b       # Shell into client-b container
+make phase1-test-env     # Phase 1 Docker test environment
+make phase1-test-env-down # Stop Phase 1 environment
+
+make phase2-test-env     # Phase 2 Docker test environment (recommended)
+make phase2-test-env-down # Stop Phase 2 environment
 
 make test                # Run all tests
 make fmt                 # Format code
@@ -242,5 +289,5 @@ make clean               # Remove build artifacts
 |-------|-------|--------|
 | **Phase 0** | Proof of Concept -- local filesystem backend, basic FUSE | Complete |
 | **Phase 1** | MVP -- PostgreSQL, S3, JWT auth, Docker test env | Complete |
-| **Phase 2** | Production -- metrics, logging, write ops, versioning, conflict detection | Complete |
-| **Phase 3** | Multi-platform -- Windows CfAPI client, Admin UI | Planned |
+| **Phase 2** | Production -- metrics, logging, write ops, versioning, sharing, quotas, admin UI | Complete |
+| **Phase 3** | Multi-platform -- Windows CfAPI client | Planned |
