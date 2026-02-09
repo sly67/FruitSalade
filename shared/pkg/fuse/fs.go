@@ -337,8 +337,8 @@ func (f *FruitFS) CacheStats() (used, max int64, count int) {
 }
 
 // GetStats returns filesystem statistics.
-func (f *FruitFS) GetStats() Stats {
-	return f.stats
+func (f *FruitFS) GetStats() *Stats {
+	return &f.stats
 }
 
 // IsOnline returns true if the server is reachable.

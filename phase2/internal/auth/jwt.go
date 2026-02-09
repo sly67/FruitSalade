@@ -39,6 +39,7 @@ type Claims struct {
 type Auth struct {
 	db     *sql.DB
 	secret []byte
+	oidc   *OIDCProvider
 }
 
 // New creates a new Auth handler.
@@ -290,6 +291,11 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// HasOIDC returns true if an OIDC provider is configured.
+func (a *Auth) HasOIDC() bool {
+	return a.oidc != nil
+}
+
 // DB returns the underlying database connection.
 func (a *Auth) DB() *sql.DB {
 	return a.db
@@ -361,6 +367,135 @@ func (a *Auth) ActiveSessionCount(ctx context.Context) (int64, error) {
 	err := a.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM device_tokens WHERE revoked = FALSE`).Scan(&count)
 	return count, err
+}
+
+// DeviceToken represents a device session.
+type DeviceToken struct {
+	ID         int       `json:"id"`
+	DeviceName string    `json:"device_name"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastUsed   time.Time `json:"last_used"`
+	Revoked    bool      `json:"revoked"`
+}
+
+// ListSessions returns all device tokens for a user.
+func (a *Auth) ListSessions(ctx context.Context, userID int) ([]DeviceToken, error) {
+	rows, err := a.db.QueryContext(ctx,
+		`SELECT id, device_name, created_at, COALESCE(last_used, created_at), revoked
+		 FROM device_tokens WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []DeviceToken
+	for rows.Next() {
+		var t DeviceToken
+		if err := rows.Scan(&t.ID, &t.DeviceName, &t.CreatedAt, &t.LastUsed, &t.Revoked); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+// RevokeToken revokes the current token by its hash.
+func (a *Auth) RevokeToken(ctx context.Context, tokenStr string) error {
+	h := hashToken(tokenStr)
+	result, err := a.db.ExecContext(ctx,
+		`UPDATE device_tokens SET revoked = TRUE WHERE token_hash = $1`, h)
+	if err != nil {
+		return fmt.Errorf("revoke token: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("token not found")
+	}
+	a.updateActiveTokenCount(ctx)
+	return nil
+}
+
+// RevokeSession revokes a specific device token by ID (must belong to userID).
+func (a *Auth) RevokeSession(ctx context.Context, userID, tokenID int) error {
+	result, err := a.db.ExecContext(ctx,
+		`UPDATE device_tokens SET revoked = TRUE WHERE id = $1 AND user_id = $2`, tokenID, userID)
+	if err != nil {
+		return fmt.Errorf("revoke session: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("session not found")
+	}
+	a.updateActiveTokenCount(ctx)
+	return nil
+}
+
+// RefreshToken generates a new token from a valid existing one.
+// The old token is revoked. Returns the new token string and expiry.
+func (a *Auth) RefreshToken(ctx context.Context, oldTokenStr string) (string, time.Time, error) {
+	claims, err := a.validateToken(oldTokenStr)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("invalid token: %w", err)
+	}
+
+	// Check if old token is revoked
+	revoked, err := a.isTokenRevoked(ctx, oldTokenStr)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if revoked {
+		return "", time.Time{}, fmt.Errorf("token has been revoked")
+	}
+
+	// Re-verify user still exists
+	var isAdmin bool
+	err = a.db.QueryRowContext(ctx,
+		`SELECT is_admin FROM users WHERE id = $1`, claims.UserID).Scan(&isAdmin)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("user not found")
+	}
+
+	// Generate new token
+	now := time.Now()
+	newClaims := &Claims{
+		UserID:   claims.UserID,
+		Username: claims.Username,
+		IsAdmin:  isAdmin,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(30 * 24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			Issuer:    "fruitsalade",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, newClaims)
+	newTokenStr, err := token.SignedString(a.secret)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("sign token: %w", err)
+	}
+
+	// Revoke old token
+	a.RevokeToken(ctx, oldTokenStr)
+
+	// Get device name from old token
+	oldHash := hashToken(oldTokenStr)
+	var deviceName string
+	a.db.QueryRowContext(ctx,
+		`SELECT device_name FROM device_tokens WHERE token_hash = $1`, oldHash).Scan(&deviceName)
+	if deviceName == "" {
+		deviceName = "refreshed"
+	}
+
+	// Record new token
+	newHash := hashToken(newTokenStr)
+	a.db.ExecContext(ctx,
+		`INSERT INTO device_tokens (user_id, device_name, token_hash) VALUES ($1, $2, $3)`,
+		claims.UserID, deviceName, newHash)
+
+	a.updateActiveTokenCount(ctx)
+
+	logging.Info("token refreshed", zap.Int("user_id", claims.UserID))
+	return newTokenStr, newClaims.ExpiresAt.Time, nil
 }
 
 func sendAuthError(w http.ResponseWriter, code int, message string) {

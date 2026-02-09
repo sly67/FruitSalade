@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -188,4 +189,97 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		"active_share_links": activeShareLinks,
 		"total_share_links":  totalShareLinks,
 	})
+}
+
+// ─── Token Management (user-facing, not admin-only) ─────────────────────────
+
+func (s *Server) handleRevokeCurrentToken(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	tokenStr := extractBearerToken(r)
+	if tokenStr == "" {
+		s.sendError(w, http.StatusBadRequest, "no token to revoke")
+		return
+	}
+
+	if err := s.auth.RevokeToken(r.Context(), tokenStr); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to revoke token: "+err.Error())
+		return
+	}
+
+	logging.Info("token revoked", zap.Int("user_id", claims.UserID))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"revoked": true})
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	sessions, err := s.auth.ListSessions(r.Context(), claims.UserID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to list sessions: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sessions)
+}
+
+func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	tokenID, err := strconv.Atoi(r.PathValue("tokenID"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid token ID")
+		return
+	}
+
+	if err := s.auth.RevokeSession(r.Context(), claims.UserID, tokenID); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to revoke session: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"token_id": tokenID, "revoked": true})
+}
+
+func (s *Server) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
+	tokenStr := extractBearerToken(r)
+	if tokenStr == "" {
+		s.sendError(w, http.StatusUnauthorized, "bearer token required")
+		return
+	}
+
+	newToken, expiresAt, err := s.auth.RefreshToken(r.Context(), tokenStr)
+	if err != nil {
+		s.sendError(w, http.StatusUnauthorized, "refresh failed: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"token":      newToken,
+		"expires_at": expiresAt,
+	})
+}
+
+func extractBearerToken(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	return ""
 }

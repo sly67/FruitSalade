@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"os"
 	"os/signal"
@@ -92,6 +93,23 @@ func main() {
 		logging.Error("failed to ensure default admin", zap.Error(err))
 	}
 
+	// Initialize OIDC provider (optional)
+	if cfg.OIDCIssuerURL != "" {
+		oidcProvider, err := auth.NewOIDCProvider(ctx, auth.OIDCConfig{
+			IssuerURL:    cfg.OIDCIssuerURL,
+			ClientID:     cfg.OIDCClientID,
+			ClientSecret: cfg.OIDCClientSecret,
+			AdminClaim:   cfg.OIDCAdminClaim,
+			AdminValue:   cfg.OIDCAdminValue,
+		}, authHandler)
+		if err != nil {
+			logging.Fatal("OIDC provider init failed", zap.Error(err))
+		}
+		if oidcProvider != nil {
+			authHandler.SetOIDCProvider(oidcProvider)
+		}
+	}
+
 	// Initialize SSE broadcaster
 	broadcaster := events.NewBroadcaster()
 	logging.Info("SSE broadcaster initialized")
@@ -129,10 +147,17 @@ func main() {
 		}
 	}()
 
-	// Start HTTP server
+	// Start HTTP(S) server
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: srv.Handler(),
+	}
+
+	useTLS := cfg.TLSCertFile != "" && cfg.TLSKeyFile != ""
+	if useTLS {
+		httpServer.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS13,
+		}
 	}
 
 	// Graceful shutdown
@@ -158,9 +183,18 @@ func main() {
 		}
 	}()
 
-	logging.Info("server listening", zap.String("addr", cfg.ListenAddr))
-	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-		logging.Fatal("server error", zap.Error(err))
+	if useTLS {
+		logging.Info("server listening (TLS 1.3)",
+			zap.String("addr", cfg.ListenAddr),
+			zap.String("cert", cfg.TLSCertFile))
+		if err := httpServer.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != http.ErrServerClosed {
+			logging.Fatal("server error", zap.Error(err))
+		}
+	} else {
+		logging.Info("server listening (HTTP)", zap.String("addr", cfg.ListenAddr))
+		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+			logging.Fatal("server error", zap.Error(err))
+		}
 	}
 }
 

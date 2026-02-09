@@ -1,0 +1,35 @@
+[Unit]
+Description=FruitSalade FUSE Client (%i)
+Documentation=https://github.com/sly67/FruitSalade
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+
+ExecStart=/usr/local/bin/fruitsalade-fuse \
+    -mount /mnt/fruitsalade/%i \
+    -server http://localhost:8080 \
+    -cache /var/cache/fruitsalade/%i \
+    -max-cache 1073741824 \
+    -watch \
+    -health-check 30s \
+    -refresh 30s
+
+# Token must be set via environment file per instance
+EnvironmentFile=/etc/fruitsalade/fuse-%i.env
+
+ExecStartPre=/bin/mkdir -p /mnt/fruitsalade/%i
+ExecStartPre=/bin/mkdir -p /var/cache/fruitsalade/%i
+ExecStop=/bin/fusermount -u /mnt/fruitsalade/%i
+
+Restart=on-failure
+RestartSec=10
+
+# FUSE requires SYS_ADMIN capability
+AmbientCapabilities=CAP_SYS_ADMIN
+NoNewPrivileges=false
+
+[Install]
+WantedBy=multi-user.target

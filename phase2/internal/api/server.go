@@ -168,11 +168,23 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/admin/sharelinks", s.handleListShareLinks)
 	protected.HandleFunc("GET /api/v1/admin/stats", s.handleDashboardStats)
 
+	// Token management endpoints (user-facing)
+	protected.HandleFunc("DELETE /api/v1/auth/token", s.handleRevokeCurrentToken)
+	protected.HandleFunc("POST /api/v1/auth/refresh", s.handleRefreshToken)
+	protected.HandleFunc("GET /api/v1/auth/sessions", s.handleListSessions)
+	protected.HandleFunc("DELETE /api/v1/auth/sessions/{tokenID}", s.handleRevokeSession)
+
 	// User usage endpoint
 	protected.HandleFunc("GET /api/v1/usage", s.handleGetUsage)
 
 	// Wrap protected routes with auth then rate limiter
-	authed := s.auth.Middleware(protected)
+	// Use OIDC-aware middleware if OIDC is configured
+	var authed http.Handler
+	if s.auth.HasOIDC() {
+		authed = s.auth.MiddlewareWithOIDC(protected)
+	} else {
+		authed = s.auth.Middleware(protected)
+	}
 	getUserInfo := func(ctx context.Context) (int, int, bool) {
 		claims := auth.GetClaims(ctx)
 		if claims == nil {

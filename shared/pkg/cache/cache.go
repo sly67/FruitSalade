@@ -2,6 +2,7 @@
 package cache
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -238,4 +239,76 @@ func (c *Cache) IsPinned(fileID string) bool {
 	defer c.mu.RUnlock()
 	entry, ok := c.entries[fileID]
 	return ok && entry.Pinned
+}
+
+// SavePins persists the pinned file IDs to a JSON file in the cache directory.
+func (c *Cache) SavePins() error {
+	c.mu.RLock()
+	var pins []string
+	for id, entry := range c.entries {
+		if entry.Pinned {
+			pins = append(pins, id)
+		}
+	}
+	c.mu.RUnlock()
+
+	data, err := json.Marshal(pins)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(c.dir, "pins.json"), data, 0644)
+}
+
+// LoadPins restores pinned status from the persisted pins file.
+func (c *Cache) LoadPins() error {
+	data, err := os.ReadFile(filepath.Join(c.dir, "pins.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var pins []string
+	if err := json.Unmarshal(data, &pins); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, id := range pins {
+		if entry, ok := c.entries[id]; ok {
+			entry.Pinned = true
+		}
+	}
+	return nil
+}
+
+// PinByPath finds a cached file by matching a path suffix and pins it.
+// Returns the file ID if found.
+func (c *Cache) PinByPath(path string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for id, entry := range c.entries {
+		if entry.LocalPath != "" && (id == path || filepath.Base(entry.LocalPath) == path) {
+			entry.Pinned = true
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("file not cached: %s", path)
+}
+
+// UnpinByPath finds a cached file by matching a path suffix and unpins it.
+func (c *Cache) UnpinByPath(path string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for id, entry := range c.entries {
+		if entry.LocalPath != "" && (id == path || filepath.Base(entry.LocalPath) == path) {
+			entry.Pinned = false
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("file not cached: %s", path)
 }

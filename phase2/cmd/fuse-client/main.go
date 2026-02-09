@@ -7,6 +7,14 @@
 // - Health check for offline recovery
 // - File creation, modification, deletion via FUSE
 // - Extended attributes for file status
+//
+// Sub-commands:
+//
+//	fruitsalade-fuse mount [flags]    Mount filesystem (default)
+//	fruitsalade-fuse pin <file-id>    Pin a cached file
+//	fruitsalade-fuse unpin <file-id>  Unpin a cached file
+//	fruitsalade-fuse pinned           List pinned files
+//	fruitsalade-fuse status           Show cache status
 package main
 
 import (
@@ -18,11 +26,36 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fruitsalade/fruitsalade/shared/pkg/cache"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/fuse"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/logger"
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "pin":
+			cmdPin(os.Args[2:])
+			return
+		case "unpin":
+			cmdUnpin(os.Args[2:])
+			return
+		case "pinned":
+			cmdPinned(os.Args[2:])
+			return
+		case "status":
+			cmdStatus(os.Args[2:])
+			return
+		case "mount":
+			// Strip "mount" from args and fall through to normal parsing
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+		}
+	}
+
+	cmdMount()
+}
+
+func cmdMount() {
 	mountPoint := flag.String("mount", "", "Mount point for virtual filesystem (required)")
 	serverURL := flag.String("server", "http://localhost:8080", "Server URL")
 	cacheDir := flag.String("cache", "/tmp/fruitsalade-cache", "Cache directory")
@@ -115,4 +148,115 @@ func main() {
 	fruitFS.StopHealthCheck()
 	server.Unmount()
 	logger.Info("Done")
+}
+
+func openCache(args []string) (*cache.Cache, *flag.FlagSet) {
+	fs := flag.NewFlagSet("", flag.ExitOnError)
+	cacheDir := fs.String("cache", "/tmp/fruitsalade-cache", "Cache directory")
+	fs.Parse(args)
+	c, err := cache.New(*cacheDir, 0) // size 0 = we're not writing, just managing
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening cache: %v\n", err)
+		os.Exit(1)
+	}
+	return c, fs
+}
+
+func cmdPin(args []string) {
+	fs := flag.NewFlagSet("pin", flag.ExitOnError)
+	cacheDir := fs.String("cache", "/tmp/fruitsalade-cache", "Cache directory")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: fruitsalade-fuse pin [-cache dir] <file-id>\n")
+		os.Exit(1)
+	}
+
+	fileID := fs.Arg(0)
+	c, err := cache.New(*cacheDir, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := c.Pin(fileID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := c.SavePins(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to persist pins: %v\n", err)
+	}
+	fmt.Printf("Pinned: %s\n", fileID)
+}
+
+func cmdUnpin(args []string) {
+	fs := flag.NewFlagSet("unpin", flag.ExitOnError)
+	cacheDir := fs.String("cache", "/tmp/fruitsalade-cache", "Cache directory")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: fruitsalade-fuse unpin [-cache dir] <file-id>\n")
+		os.Exit(1)
+	}
+
+	fileID := fs.Arg(0)
+	c, err := cache.New(*cacheDir, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := c.Unpin(fileID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := c.SavePins(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to persist pins: %v\n", err)
+	}
+	fmt.Printf("Unpinned: %s\n", fileID)
+}
+
+func cmdPinned(args []string) {
+	fs := flag.NewFlagSet("pinned", flag.ExitOnError)
+	cacheDir := fs.String("cache", "/tmp/fruitsalade-cache", "Cache directory")
+	fs.Parse(args)
+
+	c, err := cache.New(*cacheDir, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	c.LoadPins()
+
+	pinned := c.Pinned()
+	if len(pinned) == 0 {
+		fmt.Println("No pinned files.")
+		return
+	}
+
+	fmt.Printf("%-40s  %10s  %s\n", "FILE ID", "SIZE", "PATH")
+	for _, e := range pinned {
+		fmt.Printf("%-40s  %10d  %s\n", e.FileID, e.Size, e.LocalPath)
+	}
+}
+
+func cmdStatus(args []string) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	cacheDir := fs.String("cache", "/tmp/fruitsalade-cache", "Cache directory")
+	fs.Parse(args)
+
+	c, err := cache.New(*cacheDir, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	size, maxSize, count := c.Stats()
+	pinned := c.Pinned()
+
+	fmt.Printf("Cache directory: %s\n", *cacheDir)
+	fmt.Printf("Cached files:    %d\n", count)
+	fmt.Printf("Cache size:      %d bytes\n", size)
+	fmt.Printf("Max size:        %d bytes\n", maxSize)
+	fmt.Printf("Pinned files:    %d\n", len(pinned))
 }

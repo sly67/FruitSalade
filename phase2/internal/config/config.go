@@ -28,8 +28,19 @@ type Config struct {
 	S3Region    string
 	S3UseSSL    bool
 
+	// TLS (optional — if both set, server uses HTTPS)
+	TLSCertFile string
+	TLSKeyFile  string
+
 	// Auth
 	JWTSecret string
+
+	// OIDC (optional)
+	OIDCIssuerURL    string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCAdminClaim   string
+	OIDCAdminValue   string
 
 	// Uploads
 	MaxUploadSize int64
@@ -54,7 +65,14 @@ func Load() (*Config, error) {
 		S3SecretKey:   envOr("S3_SECRET_KEY", "minioadmin"),
 		S3Region:      envOr("S3_REGION", "us-east-1"),
 		S3UseSSL:      envBool("S3_USE_SSL", false),
+		TLSCertFile:   envOr("TLS_CERT_FILE", ""),
+		TLSKeyFile:    envOr("TLS_KEY_FILE", ""),
 		JWTSecret:     envOr("JWT_SECRET", ""),
+		OIDCIssuerURL:    envOr("OIDC_ISSUER_URL", ""),
+		OIDCClientID:     envOr("OIDC_CLIENT_ID", ""),
+		OIDCClientSecret: envOr("OIDC_CLIENT_SECRET", ""),
+		OIDCAdminClaim:   envOr("OIDC_ADMIN_CLAIM", "is_admin"),
+		OIDCAdminValue:   envOr("OIDC_ADMIN_VALUE", "true"),
 		MaxUploadSize:        envInt64("MAX_UPLOAD_SIZE", 100*1024*1024), // 100MB default
 		DefaultMaxStorage:    envInt64("DEFAULT_MAX_STORAGE", 0),        // 0 = unlimited
 		DefaultMaxBandwidth:  envInt64("DEFAULT_MAX_BANDWIDTH", 0),      // 0 = unlimited

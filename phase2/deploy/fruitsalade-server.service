@@ -1,0 +1,45 @@
+[Unit]
+Description=FruitSalade File Sync Server
+Documentation=https://github.com/sly67/FruitSalade
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fruitsalade
+Group=fruitsalade
+
+ExecStart=/usr/local/bin/fruitsalade-server
+
+# Required
+Environment=DATABASE_URL=postgres://fruitsalade:changeme@localhost/fruitsalade?sslmode=disable
+Environment=JWT_SECRET=changeme-generate-a-real-secret
+
+# Optional — uncomment and adjust as needed
+#Environment=LISTEN_ADDR=:8080
+#Environment=METRICS_ADDR=:9090
+#Environment=S3_ENDPOINT=http://localhost:9000
+#Environment=S3_BUCKET=fruitsalade
+#Environment=S3_ACCESS_KEY=minioadmin
+#Environment=S3_SECRET_KEY=minioadmin
+#Environment=LOG_LEVEL=info
+#Environment=LOG_FORMAT=json
+#Environment=MAX_UPLOAD_SIZE=104857600
+#Environment=TLS_CERT_FILE=/etc/fruitsalade/cert.pem
+#Environment=TLS_KEY_FILE=/etc/fruitsalade/key.pem
+
+# Or use an environment file:
+#EnvironmentFile=/etc/fruitsalade/server.env
+
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fruitsalade
+
+[Install]
+WantedBy=multi-user.target
