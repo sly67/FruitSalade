@@ -89,6 +89,34 @@ Extend the MVP into a full-featured production system with write support, observ
 - [x] Dockerfile with multi-stage build
 - [x] Automated database seeding and migration
 
+### 2.12 TLS/HTTPS (Complete)
+- [x] Optional TLS 1.3 support via `TLS_CERT_FILE` and `TLS_KEY_FILE` env vars
+- [x] Automatic fallback to HTTP when not configured
+
+### 2.13 OIDC Authentication (Complete)
+- [x] Federated authentication via OpenID Connect (Keycloak, Auth0, etc.)
+- [x] Auto-provisioning of local users on first OIDC login
+- [x] Admin claim mapping from OIDC token claims
+- [x] Dual auth: tries local JWT first, falls back to OIDC
+
+### 2.14 Token Management (Complete)
+- [x] Token revocation (`DELETE /api/v1/auth/token`)
+- [x] Token refresh (`POST /api/v1/auth/refresh`)
+- [x] Session listing (`GET /api/v1/auth/sessions`)
+- [x] Session revocation (`DELETE /api/v1/auth/sessions/{id}`)
+
+### 2.15 Pin/Unpin CLI (Complete)
+- [x] `pin` subcommand: pin files for permanent local caching
+- [x] `unpin` subcommand: remove pin from cached files
+- [x] `pinned` subcommand: list all pinned files
+- [x] `status` subcommand: show cache usage and pin count
+- [x] Pin state persisted to JSON in cache directory
+
+### 2.16 Deployment (Complete)
+- [x] Systemd service file for server (`fruitsalade-server.service`)
+- [x] Systemd template unit for FUSE clients (`fruitsalade-fuse@.service`)
+- [x] Grafana dashboard JSON (`phase2/deploy/grafana-dashboard.json`)
+
 ## Planned Features
 
 ### Windows Client (Not Started)
@@ -102,6 +130,10 @@ Extend the MVP into a full-featured production system with write support, observ
 |----------|--------|------|-------------|
 | `/health` | GET | No | Health check |
 | `/api/v1/auth/token` | POST | No | Login, get JWT |
+| `/api/v1/auth/token` | DELETE | Yes | Revoke current token |
+| `/api/v1/auth/refresh` | POST | Yes | Refresh token |
+| `/api/v1/auth/sessions` | GET | Yes | List active sessions |
+| `/api/v1/auth/sessions/{id}` | DELETE | Yes | Revoke session |
 | `/api/v1/tree` | GET | Yes | Full metadata tree |
 | `/api/v1/tree/{path}` | GET | Yes | Subtree metadata |
 | `/api/v1/content/{path}` | GET | Yes | File content (Range, ETag, X-Version) |
@@ -201,6 +233,13 @@ Extend the MVP into a full-featured production system with write support, observ
 | `S3_SECRET_KEY` | `minioadmin` | S3 secret key |
 | `JWT_SECRET` | (required) | JWT signing secret |
 | `MAX_UPLOAD_SIZE` | `104857600` | Max upload size (100MB) |
+| `TLS_CERT_FILE` | (empty) | TLS certificate file (enables HTTPS with TLS 1.3) |
+| `TLS_KEY_FILE` | (empty) | TLS private key file |
+| `OIDC_ISSUER_URL` | (empty) | OIDC provider URL (enables federated auth) |
+| `OIDC_CLIENT_ID` | (empty) | OIDC client ID |
+| `OIDC_CLIENT_SECRET` | (empty) | OIDC client secret |
+| `OIDC_ADMIN_CLAIM` | `is_admin` | OIDC token claim key for admin |
+| `OIDC_ADMIN_VALUE` | `true` | OIDC claim value that indicates admin |
 
 ## Testing
 
@@ -274,6 +313,51 @@ curl http://localhost:8080/api/v1/admin/stats \
 # Open http://localhost:8080/admin/ in a browser
 # Login with admin/admin
 ```
+
+## Deployment
+
+### Systemd
+
+```bash
+# Copy service files
+sudo cp phase2/deploy/fruitsalade-server.service /etc/systemd/system/
+sudo cp phase2/deploy/fruitsalade-fuse@.service /etc/systemd/system/
+
+# Edit environment file
+sudo nano /etc/fruitsalade/server.env   # DATABASE_URL, JWT_SECRET, S3_*, etc.
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable --now fruitsalade-server
+
+# Mount a FUSE client instance (e.g., "work")
+sudo systemctl enable --now fruitsalade-fuse@work
+```
+
+### TLS
+
+```bash
+# Generate self-signed cert (for dev)
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+
+# Start with TLS
+TLS_CERT_FILE=cert.pem TLS_KEY_FILE=key.pem ./bin/phase2-server
+```
+
+### OIDC (Keycloak example)
+
+```bash
+OIDC_ISSUER_URL=https://keycloak.example.com/realms/fruitsalade \
+OIDC_CLIENT_ID=fruitsalade \
+OIDC_CLIENT_SECRET=secret \
+./bin/phase2-server
+```
+
+Users authenticating via OIDC are auto-created locally on first login.
+
+### Grafana Dashboard
+
+Import `phase2/deploy/grafana-dashboard.json` into Grafana, selecting your Prometheus datasource. The dashboard includes panels for HTTP requests, content transfers, S3 operations, auth, sharing, quotas, and database performance.
 
 ## Docker Test Environment
 

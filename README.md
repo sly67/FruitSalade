@@ -19,6 +19,12 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **File sharing** -- ACL-based permissions with path inheritance + share links (password, expiry, download limits)
 - **Rate limiting & quotas** -- per-user storage, bandwidth, RPM, and upload size limits
 - **Admin dashboard** -- embedded web UI at `/admin/` for managing users, files, and share links
+- **TLS/HTTPS** -- optional TLS 1.3 with certificate files
+- **OIDC authentication** -- federated login via Keycloak, Auth0, etc. with auto user provisioning
+- **Token management** -- revoke, refresh, and list active sessions per user
+- **Pin/unpin CLI** -- pin files for permanent local caching via FUSE client subcommands
+- **Grafana dashboard** -- pre-built JSON dashboard for all Prometheus metrics
+- **Systemd service files** -- server and FUSE client template units for production deployment
 - **CI pipeline** -- GitHub Actions (lint, test, build, Docker)
 - **Docker-ready** -- full test environment with compose (server, 2 FUSE clients, PostgreSQL, MinIO)
 
@@ -119,6 +125,10 @@ fruitsalade/
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/v1/auth/token` | POST | Login with `{username, password, device_name}`, returns JWT |
+| `/api/v1/auth/token` | DELETE | Revoke current token |
+| `/api/v1/auth/refresh` | POST | Refresh token (returns new token, revokes old) |
+| `/api/v1/auth/sessions` | GET | List active sessions for current user |
+| `/api/v1/auth/sessions/{id}` | DELETE | Revoke a specific session |
 
 Default credentials: `admin` / `admin`
 
@@ -221,6 +231,25 @@ The FUSE client supports full read-write access:
 
 **Key design rule**: `ls`, `stat`, `find`, and `du` never trigger content downloads.
 
+### FUSE Client Subcommands
+
+```bash
+# Mount (default behavior)
+./bin/phase2-fuse -mount /tmp/fruit -server http://localhost:8080 -token "$TOKEN"
+
+# Pin a file for permanent local caching
+./bin/phase2-fuse pin -cache /tmp/fruitsalade-cache /path/to/file.txt
+
+# Unpin a file
+./bin/phase2-fuse unpin -cache /tmp/fruitsalade-cache /path/to/file.txt
+
+# List pinned files
+./bin/phase2-fuse pinned -cache /tmp/fruitsalade-cache
+
+# Cache status
+./bin/phase2-fuse status -cache /tmp/fruitsalade-cache
+```
+
 ## Build Targets
 
 ```bash
@@ -257,6 +286,13 @@ make clean               # Remove build artifacts
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `LOG_FORMAT` | `json` | Log format (json, console) |
 | `MAX_UPLOAD_SIZE` | `104857600` | Max upload size in bytes (100MB) |
+| `TLS_CERT_FILE` | (empty) | TLS certificate file (enables HTTPS) |
+| `TLS_KEY_FILE` | (empty) | TLS private key file |
+| `OIDC_ISSUER_URL` | (empty) | OIDC provider URL (enables federated auth) |
+| `OIDC_CLIENT_ID` | (empty) | OIDC client ID |
+| `OIDC_CLIENT_SECRET` | (empty) | OIDC client secret |
+| `OIDC_ADMIN_CLAIM` | `is_admin` | OIDC claim key for admin status |
+| `OIDC_ADMIN_VALUE` | `true` | OIDC claim value that indicates admin |
 
 ### FUSE Client Flags
 
@@ -280,7 +316,7 @@ make clean               # Remove build artifacts
 | Linux Client | Go, go-fuse v2 (FUSE3) |
 | Metrics | Prometheus client_golang |
 | Logging | Uber zap |
-| Auth | JWT (golang-jwt/jwt/v5), bcrypt |
+| Auth | JWT (golang-jwt/jwt/v5), bcrypt, OIDC (go-oidc/v3) |
 | Container | Docker, Docker Compose |
 
 ## Phase Overview
