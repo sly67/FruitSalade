@@ -137,7 +137,7 @@ func TestMain(m *testing.M) {
 	srv := NewServer(
 		storage, authHandler, 10*1024*1024,
 		broadcaster, permissionStore, shareLinkStore,
-		quotaStore, rateLimiter,
+		quotaStore, rateLimiter, nil,
 	)
 	if err := srv.Init(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "SKIP: server init failed: %v\n", err)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/fruitsalade/fruitsalade/phase2/internal/auth"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/config"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/events"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/logging"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metadata/postgres"
@@ -26,7 +28,9 @@ import (
 	"github.com/fruitsalade/fruitsalade/phase2/internal/quota"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/sharing"
 	s3storage "github.com/fruitsalade/fruitsalade/phase2/internal/storage/s3"
+	davpkg "github.com/fruitsalade/fruitsalade/phase2/internal/webdav"
 	"github.com/fruitsalade/fruitsalade/phase2/ui"
+	"github.com/fruitsalade/fruitsalade/phase2/webapp"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/protocol"
 )
@@ -37,6 +41,7 @@ type Server struct {
 	auth          *auth.Auth
 	tree          *models.FileNode
 	maxUploadSize int64
+	config        *config.Config
 
 	// SSE
 	broadcaster *events.Broadcaster
@@ -60,6 +65,7 @@ func NewServer(
 	shareLinks *sharing.ShareLinkStore,
 	quotaStore *quota.QuotaStore,
 	rateLimiter *quota.RateLimiter,
+	cfg *config.Config,
 ) *Server {
 	return &Server{
 		storage:       storage,
@@ -70,6 +76,7 @@ func NewServer(
 		shareLinks:    shareLinks,
 		quotaStore:    quotaStore,
 		rateLimiter:   rateLimiter,
+		config:        cfg,
 	}
 }
 
@@ -127,6 +134,18 @@ func (s *Server) Handler() http.Handler {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
 
+	// Web file browser (no auth — the app handles login via API)
+	appFS, _ := fs.Sub(webapp.Assets, ".")
+	mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.FS(appFS))))
+	mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
+	})
+
+	// WebDAV endpoint (has its own auth middleware)
+	davHandler := davpkg.NewHandler(s.storage, s.auth)
+	mux.Handle("/webdav/", davHandler)
+	mux.Handle("/webdav", davHandler)
+
 	// Protected endpoints
 	protected := http.NewServeMux()
 
@@ -167,6 +186,8 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("PUT /api/v1/admin/users/{userID}/password", s.handleChangePassword)
 	protected.HandleFunc("GET /api/v1/admin/sharelinks", s.handleListShareLinks)
 	protected.HandleFunc("GET /api/v1/admin/stats", s.handleDashboardStats)
+	protected.HandleFunc("GET /api/v1/admin/config", s.handleGetConfig)
+	protected.HandleFunc("PUT /api/v1/admin/config", s.handleUpdateConfig)
 
 	// Token management endpoints (user-facing)
 	protected.HandleFunc("DELETE /api/v1/auth/token", s.handleRevokeCurrentToken)
@@ -440,6 +461,13 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer reader.Close()
+
+	// Set Content-Type based on file extension
+	ct := mime.TypeByExtension(filepath.Ext(fullPath))
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
 
 	if hasRange {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+length-1, totalSize))

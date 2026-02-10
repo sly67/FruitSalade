@@ -92,7 +92,7 @@ phase1-exec-b:
 #==============================================================================
 # PHASE 2 - Production (Full Features)
 #==============================================================================
-.PHONY: phase2 phase2-server phase2-fuse phase2-windows phase2-test
+.PHONY: phase2 phase2-server phase2-fuse phase2-winclient phase2-windows phase2-test
 .PHONY: phase2-docker phase2-test-env phase2-test-env-down phase2-test-env-logs phase2-exec-a phase2-exec-b
 
 phase2: phase2-server phase2-fuse
@@ -105,8 +105,12 @@ phase2-fuse:
 	@echo "Building Phase 2 FUSE Client..."
 	cd phase2 && go build -o ../bin/phase2-fuse ./cmd/fuse-client
 
+phase2-winclient:
+	@echo "Building Phase 2 Windows Client (cgofuse, native)..."
+	cd phase2 && go build -o ../bin/phase2-winclient ./cmd/windows-client
+
 phase2-windows:
-	@echo "Building Phase 2 Windows Client..."
+	@echo "Building Phase 2 Windows Client (cross-compile for Windows)..."
 	@echo "Requires: Windows build environment with CGO"
 	cd phase2 && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o ../bin/phase2-windows.exe ./cmd/windows-client
 
@@ -204,7 +208,8 @@ help:
 	@echo ""
 	@echo "Phase 2 (Production):"
 	@echo "  make phase2              Build server + FUSE client"
-	@echo "  make phase2-windows      Build Windows client (requires CGO)"
+	@echo "  make phase2-winclient    Build Windows client (native, cgofuse)"
+	@echo "  make phase2-windows      Cross-compile Windows client (requires CGO)"
 	@echo "  make phase2-test         Run Phase 2 tests"
 	@echo "  make phase2-docker       Build all Docker images"
 	@echo "  make phase2-test-env     Start full test env (build + up)"

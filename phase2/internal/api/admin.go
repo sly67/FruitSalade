@@ -283,3 +283,106 @@ func extractBearerToken(r *http.Request) string {
 	}
 	return ""
 }
+
+// ─── Admin: Config ──────────────────────────────────────────────────────────
+
+func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdmin(w, r) == nil {
+		return
+	}
+
+	if s.config == nil {
+		s.sendError(w, http.StatusInternalServerError, "configuration not available")
+		return
+	}
+
+	cfg := s.config
+	resp := map[string]interface{}{
+		"server": map[string]interface{}{
+			"listen_addr":  cfg.ListenAddr,
+			"metrics_addr": cfg.MetricsAddr,
+		},
+		"storage": map[string]interface{}{
+			"s3_endpoint": cfg.S3Endpoint,
+			"s3_bucket":   cfg.S3Bucket,
+			"s3_region":   cfg.S3Region,
+			"s3_use_ssl":  cfg.S3UseSSL,
+		},
+		"database": map[string]interface{}{
+			"connected": true,
+		},
+		"auth": map[string]interface{}{
+			"jwt_configured": cfg.JWTSecret != "",
+			"oidc_issuer":    cfg.OIDCIssuerURL,
+		},
+		"tls": map[string]interface{}{
+			"enabled":   cfg.TLSCertFile != "" && cfg.TLSKeyFile != "",
+			"cert_file": cfg.TLSCertFile,
+		},
+		"runtime": map[string]interface{}{
+			"log_level":             cfg.LogLevel,
+			"max_upload_size":       cfg.MaxUploadSize,
+			"default_max_storage":   cfg.DefaultMaxStorage,
+			"default_max_bandwidth": cfg.DefaultMaxBandwidth,
+			"default_requests_per_min": cfg.DefaultRequestsPerMin,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdmin(w, r) == nil {
+		return
+	}
+
+	if s.config == nil {
+		s.sendError(w, http.StatusInternalServerError, "configuration not available")
+		return
+	}
+
+	var req map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	cfg := s.config
+
+	if v, ok := req["log_level"].(string); ok {
+		cfg.LogLevel = v
+		logging.SetLevel(v)
+		logging.Info("log level changed", zap.String("level", v))
+	}
+
+	if v, ok := req["max_upload_size"].(float64); ok {
+		cfg.MaxUploadSize = int64(v)
+		s.maxUploadSize = int64(v)
+		logging.Info("max upload size changed", zap.Int64("size", int64(v)))
+	}
+
+	if v, ok := req["default_max_storage"].(float64); ok {
+		cfg.DefaultMaxStorage = int64(v)
+	}
+
+	if v, ok := req["default_max_bandwidth"].(float64); ok {
+		cfg.DefaultMaxBandwidth = int64(v)
+	}
+
+	if v, ok := req["default_requests_per_min"].(float64); ok {
+		cfg.DefaultRequestsPerMin = int(v)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"updated": true,
+		"runtime": map[string]interface{}{
+			"log_level":             cfg.LogLevel,
+			"max_upload_size":       cfg.MaxUploadSize,
+			"default_max_storage":   cfg.DefaultMaxStorage,
+			"default_max_bandwidth": cfg.DefaultMaxBandwidth,
+			"default_requests_per_min": cfg.DefaultRequestsPerMin,
+		},
+	})
+}

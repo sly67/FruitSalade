@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FruitSalade</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav id="nav" class="hidden">
+        <div class="nav-brand">FruitSalade</div>
+        <div class="nav-links">
+            <a href="#browser" data-route="browser">Files</a>
+            <a href="#versions" data-route="versions">Versions</a>
+            <a href="#dashboard" data-route="dashboard" data-admin class="hidden">Dashboard</a>
+            <a href="#users" data-route="users" data-admin class="hidden">Users</a>
+            <a href="#admin-shares" data-route="admin-shares" data-admin class="hidden">Shares</a>
+            <a href="#settings" data-route="settings" data-admin class="hidden">Settings</a>
+        </div>
+        <div class="nav-user">
+            <span id="nav-username"></span>
+            <button id="btn-logout" class="btn btn-sm btn-outline">Logout</button>
+        </div>
+    </nav>
+
+    <div id="login-container" class="hidden"></div>
+
+    <div id="layout" class="hidden">
+        <aside id="sidebar">
+            <button id="sidebar-toggle" class="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
+        </aside>
+        <main id="app"></main>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script src="js/views/login.js"></script>
+    <script src="js/views/tree.js"></script>
+    <script src="js/views/browser.js"></script>
+    <script src="js/views/viewer.js"></script>
+    <script src="js/views/versions.js"></script>
+    <script src="js/views/shares.js"></script>
+    <script src="js/views/dashboard.js"></script>
+    <script src="js/views/users.js"></script>
+    <script src="js/views/admin-shares.js"></script>
+    <script src="js/views/settings.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

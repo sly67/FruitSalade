@@ -9,12 +9,15 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
+	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/fruitsalade/fruitsalade/shared v0.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/lib/pq v1.11.1
 	github.com/prometheus/client_golang v1.20.5
+	github.com/winfsp/cgofuse v1.6.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.47.0
+	golang.org/x/sys v0.40.0
 )
 
 require (
@@ -35,7 +38,7 @@ require (
 	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/coreos/go-oidc/v3 v3.17.0 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/hanwen/go-fuse/v2 v2.9.0 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
@@ -43,7 +46,8 @@ require (
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
+	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/oauth2 v0.28.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )
 

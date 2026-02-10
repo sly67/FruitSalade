@@ -129,7 +129,7 @@ func main() {
 	srv := api.NewServer(
 		storage, authHandler, cfg.MaxUploadSize,
 		broadcaster, permissionStore, shareLinkStore,
-		quotaStore, rateLimiter,
+		quotaStore, rateLimiter, cfg,
 	)
 	if err := srv.Init(ctx); err != nil {
 		logging.Fatal("server init failed", zap.Error(err))

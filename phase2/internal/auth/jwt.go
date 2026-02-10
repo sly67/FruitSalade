@@ -498,6 +498,38 @@ func (a *Auth) RefreshToken(ctx context.Context, oldTokenStr string) (string, ti
 	return newTokenStr, newClaims.ExpiresAt.Time, nil
 }
 
+// ValidateCredentials checks username/password and returns claims without HTTP.
+// Used by WebDAV Basic Auth.
+func (a *Auth) ValidateCredentials(ctx context.Context, username, password string) (*Claims, error) {
+	var userID int
+	var hashedPassword string
+	var isAdmin bool
+	err := a.db.QueryRowContext(ctx,
+		`SELECT id, password, is_admin FROM users WHERE username = $1`,
+		username).Scan(&userID, &hashedPassword, &isAdmin)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("database error: %w", err)
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password)); err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+
+	return &Claims{
+		UserID:   userID,
+		Username: username,
+		IsAdmin:  isAdmin,
+	}, nil
+}
+
+// WithClaims injects claims into a context.
+func WithClaims(ctx context.Context, claims *Claims) context.Context {
+	return context.WithValue(ctx, userContextKey, claims)
+}
+
 func sendAuthError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

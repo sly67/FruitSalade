@@ -17,7 +17,10 @@ const (
 	requestIDKey contextKey = "request_id"
 )
 
-var globalLogger *zap.Logger
+var (
+	globalLogger *zap.Logger
+	globalLevel  zap.AtomicLevel
+)
 
 // Config holds logging configuration.
 type Config struct {
@@ -40,7 +43,8 @@ func Init(cfg Config) error {
 		config = zap.NewProductionConfig()
 	}
 
-	config.Level = zap.NewAtomicLevelAt(level)
+	globalLevel = zap.NewAtomicLevelAt(level)
+	config.Level = globalLevel
 	if cfg.OutputPath != "" {
 		config.OutputPaths = []string{cfg.OutputPath}
 	}
@@ -69,6 +73,15 @@ func Sync() error {
 		return globalLogger.Sync()
 	}
 	return nil
+}
+
+// SetLevel changes the global log level at runtime.
+func SetLevel(level string) {
+	var l zapcore.Level
+	if err := l.UnmarshalText([]byte(level)); err != nil {
+		return
+	}
+	globalLevel.SetLevel(l)
 }
 
 // L returns the global logger.
