@@ -166,6 +166,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("DELETE /api/v1/tree/{path...}", s.handleDelete)
 
 	// Version endpoints
+	protected.HandleFunc("GET /api/v1/versions", s.handleVersionedFiles)
 	protected.HandleFunc("GET /api/v1/versions/{path...}", s.handleVersions)
 	protected.HandleFunc("POST /api/v1/versions/{path...}", s.handleRollback)
 
@@ -929,6 +930,19 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── Versions ───────────────────────────────────────────────────────────────
+
+func (s *Server) handleVersionedFiles(w http.ResponseWriter, r *http.Request) {
+	files, err := s.storage.Metadata().ListVersionedFiles(r.Context())
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to list versioned files: "+err.Error())
+		return
+	}
+	if files == nil {
+		files = []postgres.VersionedFileSummary{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files)
+}
 
 func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
 	path := "/" + r.PathValue("path")

@@ -513,6 +513,45 @@ func (s *Store) RestoreVersion(ctx context.Context, path string, version int, ne
 	return nil
 }
 
+// VersionedFileSummary holds summary info about a file with version history.
+type VersionedFileSummary struct {
+	Path           string    `json:"path"`
+	Name           string    `json:"name"`
+	CurrentVersion int       `json:"current_version"`
+	VersionCount   int       `json:"version_count"`
+	Size           int64     `json:"size"`
+	LatestChange   time.Time `json:"latest_change"`
+}
+
+// ListVersionedFiles returns all files that have at least one entry in file_versions.
+func (s *Store) ListVersionedFiles(ctx context.Context) ([]VersionedFileSummary, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("list_versioned_files", time.Since(start)) }()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT f.path, f.name, f.version, COUNT(fv.id) AS version_count, f.size,
+		        COALESCE(MAX(fv.created_at), f.mod_time) AS latest_change
+		 FROM files f
+		 JOIN file_versions fv ON fv.path = f.path
+		 WHERE f.is_dir = FALSE
+		 GROUP BY f.path, f.name, f.version, f.size, f.mod_time
+		 ORDER BY latest_change DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list versioned files: %w", err)
+	}
+	defer rows.Close()
+
+	var results []VersionedFileSummary
+	for rows.Next() {
+		var v VersionedFileSummary
+		if err := rows.Scan(&v.Path, &v.Name, &v.CurrentVersion, &v.VersionCount, &v.Size, &v.LatestChange); err != nil {
+			return nil, fmt.Errorf("scan versioned file: %w", err)
+		}
+		results = append(results, v)
+	}
+	return results, rows.Err()
+}
+
 func normalizePath(path string) string {
 	if path == "" {
 		return "/"

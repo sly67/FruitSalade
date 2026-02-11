@@ -1056,3 +1056,240 @@ mark {
     border-radius: var(--radius);
     background: var(--surface);
 }
+
+/* --- Version Explorer --- */
+
+.ver-stats {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.ver-stat {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.ver-stat strong {
+    color: var(--text);
+    font-size: 1.1rem;
+}
+
+.ver-path {
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ver-path code {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.ver-file-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    padding: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.ver-file-name {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.ver-file-path code {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.ver-empty {
+    padding: 2rem;
+    text-align: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+}
+
+/* --- Version Timeline --- */
+
+.ver-timeline {
+    position: relative;
+    padding-left: 1.5rem;
+}
+
+.ver-timeline::before {
+    content: '';
+    position: absolute;
+    left: 7px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+}
+
+.ver-timeline-item {
+    position: relative;
+    padding-bottom: 1.25rem;
+}
+
+.ver-timeline-item:last-child { padding-bottom: 0; }
+
+.ver-timeline-dot {
+    position: absolute;
+    left: -1.5rem;
+    top: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--border);
+    border: 2px solid var(--bg);
+    z-index: 1;
+}
+
+.ver-dot-current {
+    background: var(--success);
+    width: 14px;
+    height: 14px;
+    top: 3px;
+    left: calc(-1.5rem - 1px);
+}
+
+.ver-timeline-content {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+}
+
+.ver-current .ver-timeline-content {
+    border-color: var(--success);
+    background: rgba(22, 163, 74, 0.03);
+}
+
+.ver-timeline-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.ver-version-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.ver-timeline-date {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.ver-timeline-meta {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+}
+
+.ver-timeline-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+
+/* --- Diff Panel --- */
+
+.ver-diff-panel {
+    margin-top: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
+}
+
+.ver-diff-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.ver-diff-body {
+    max-height: 500px;
+    overflow: auto;
+}
+
+.ver-diff-stats {
+    display: flex;
+    gap: 1rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.ver-diff-stat-add { color: var(--success); font-weight: 600; }
+.ver-diff-stat-remove { color: var(--danger); font-weight: 600; }
+
+.ver-diff-table {
+    width: 100%;
+    font-size: 0.8rem;
+    font-family: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+    border-collapse: collapse;
+}
+
+.ver-diff-table th,
+.ver-diff-table td {
+    padding: 0 0.5rem;
+    border: none;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.ver-diff-table thead tr {
+    background: var(--bg);
+}
+
+.ver-diff-ln {
+    width: 40px;
+    min-width: 40px;
+    text-align: right;
+    color: var(--text-muted);
+    user-select: none;
+    border-right: 1px solid var(--border);
+    font-size: 0.75rem;
+}
+
+.ver-diff-code { width: 100%; }
+
+.ver-diff-row-same td { background: transparent; }
+.ver-diff-row-add td { background: rgba(22, 163, 74, 0.08); }
+.ver-diff-row-remove td { background: rgba(220, 38, 38, 0.08); }
+.ver-diff-row-add .ver-diff-code { color: var(--success); }
+.ver-diff-row-remove .ver-diff-code { color: var(--danger); }
+
+.ver-diff-same {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.ver-code {
+    padding: 1rem;
+    margin: 0;
+    font-family: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
