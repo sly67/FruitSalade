@@ -203,6 +203,25 @@ type FilePropertiesResponse struct {
 	VersionCount int `json:"version_count"`
 }
 
+// UserDashboardResponse is returned by GET /api/v1/user/dashboard.
+type UserDashboardResponse struct {
+	UserID         int                   `json:"user_id"`
+	Username       string                `json:"username"`
+	StorageUsed    int64                 `json:"storage_used"`
+	BandwidthToday int64                `json:"bandwidth_today"`
+	Quota          UserQuotaResponse     `json:"quota"`
+	Groups         []UserGroupInfo       `json:"groups"`
+	FileCount      int                   `json:"file_count"`
+	ShareLinkCount int                   `json:"share_link_count"`
+}
+
+// UserGroupInfo is a group membership entry for the user dashboard.
+type UserGroupInfo struct {
+	GroupID   int    `json:"group_id"`
+	GroupName string `json:"group_name"`
+	Role      string `json:"role"`
+}
+
 // ShareLinkInfo is a summary of an active share link for properties display.
 type ShareLinkInfo struct {
 	ID            string     `json:"id"`

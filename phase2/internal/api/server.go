@@ -228,6 +228,9 @@ func (s *Server) Handler() http.Handler {
 	// User usage endpoint
 	protected.HandleFunc("GET /api/v1/usage", s.handleGetUsage)
 
+	// User dashboard endpoint
+	protected.HandleFunc("GET /api/v1/user/dashboard", s.handleUserDashboard)
+
 	// Wrap protected routes with auth then rate limiter
 	// Use OIDC-aware middleware if OIDC is configured
 	var authed http.Handler
@@ -1474,6 +1477,75 @@ func (s *Server) handleGetUsage(w http.ResponseWriter, r *http.Request) {
 			MaxUploadSizeBytes: q.MaxUploadSizeBytes,
 		},
 	})
+}
+
+// ─── User Dashboard ─────────────────────────────────────────────────────────
+
+func (s *Server) handleUserDashboard(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Quota and usage
+	q, err := s.quotaStore.GetQuota(ctx, claims.UserID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get quota: "+err.Error())
+		return
+	}
+
+	storageUsed, _ := s.quotaStore.GetStorageUsed(ctx, claims.UserID)
+	bIn, bOut, _ := s.quotaStore.GetBandwidthToday(ctx, claims.UserID)
+
+	// Groups
+	memberships, _ := s.groups.GetUserGroupsWithRoles(ctx, claims.UserID)
+	var groups []protocol.UserGroupInfo
+	for _, m := range memberships {
+		groups = append(groups, protocol.UserGroupInfo{
+			GroupID:   m.GroupID,
+			GroupName: m.GroupName,
+			Role:      m.Role,
+		})
+	}
+	if groups == nil {
+		groups = []protocol.UserGroupInfo{}
+	}
+
+	// File count (owned by user)
+	var fileCount int
+	db := s.auth.DB()
+	db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM files WHERE owner_id = $1 AND is_dir = FALSE`,
+		claims.UserID).Scan(&fileCount)
+
+	// Active share link count
+	var shareLinkCount int
+	db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM share_links WHERE created_by = $1 AND is_active = TRUE`,
+		claims.UserID).Scan(&shareLinkCount)
+
+	resp := protocol.UserDashboardResponse{
+		UserID:         claims.UserID,
+		Username:       claims.Username,
+		StorageUsed:    storageUsed,
+		BandwidthToday: bIn + bOut,
+		Quota: protocol.UserQuotaResponse{
+			UserID:             q.UserID,
+			MaxStorageBytes:    q.MaxStorageBytes,
+			MaxBandwidthPerDay: q.MaxBandwidthPerDay,
+			MaxRequestsPerMin:  q.MaxRequestsPerMin,
+			MaxUploadSizeBytes: q.MaxUploadSizeBytes,
+		},
+		Groups:         groups,
+		FileCount:      fileCount,
+		ShareLinkCount: shareLinkCount,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // ─── File Properties ────────────────────────────────────────────────────────

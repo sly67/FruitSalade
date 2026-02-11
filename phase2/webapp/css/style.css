@@ -693,6 +693,113 @@ mark {
     color: var(--text);
 }
 
+/* --- Dashboard --- */
+
+.dashboard-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.dashboard-section h3 {
+    font-size: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.dashboard-empty {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.quota-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.quota-card {
+    background: var(--bg);
+    border-radius: var(--radius);
+    padding: 1rem;
+}
+
+.quota-label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.quota-value {
+    font-size: 0.85rem;
+    color: var(--text);
+    margin-top: 0.4rem;
+}
+
+.progress-bar {
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+
+.progress-bar-fill.warning { background: #eab308; }
+.progress-bar-fill.danger { background: var(--danger); }
+
+.group-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.group-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    padding: 0.3rem 0.75rem;
+    font-size: 0.85rem;
+}
+
+.group-chip .role-badge {
+    font-size: 0.65rem;
+    padding: 0.05rem 0.35rem;
+}
+
+.quick-stats-row {
+    display: flex;
+    gap: 2rem;
+    align-items: center;
+}
+
+.quick-stat-item {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+}
+
+.quick-stat-item strong {
+    color: var(--text);
+    font-size: 1.1rem;
+}
+
+@media (max-width: 640px) {
+    .quota-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* --- Settings --- */
 
 .settings-card {

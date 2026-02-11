@@ -10,6 +10,7 @@ function renderDashboard() {
             statCard('Active Sessions', data.active_sessions) +
             statCard('Files', data.files) +
             statCard('Storage', formatBytes(data.total_storage)) +
+            statCard('Groups', data.groups) +
             statCard('Active Share Links', data.active_share_links) +
             statCard('Total Share Links', data.total_share_links);
     }).catch(function() {

@@ -14,7 +14,7 @@
     };
 
     // Admin-only routes
-    var adminRoutes = ['dashboard', 'users', 'groups', 'admin-shares', 'settings'];
+    var adminRoutes = ['users', 'groups', 'admin-shares', 'settings'];
 
     function isAdmin() {
         return sessionStorage.getItem('is_admin') === 'true';
