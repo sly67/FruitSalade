@@ -72,21 +72,21 @@ function renderVersionedFileList(files) {
         return;
     }
 
-    var html = '<table><thead><tr>' +
+    var html = '<table class="responsive-table"><thead><tr>' +
         '<th>File</th><th>Path</th><th>Current Version</th><th>History</th><th>Size</th><th>Last Changed</th><th></th>' +
         '</tr></thead><tbody>';
 
     for (var i = 0; i < files.length; i++) {
         var f = files[i];
         html += '<tr class="file-row">' +
-            '<td><a class="file-name" href="#versions' + esc(f.path) + '">' +
+            '<td data-label="File"><a class="file-name" href="#versions' + esc(f.path) + '">' +
                 '<span class="file-icon">&#128196;</span>' + esc(f.name) + '</a></td>' +
-            '<td class="ver-path"><code>' + esc(f.path) + '</code></td>' +
-            '<td>v' + f.current_version + '</td>' +
-            '<td><span class="badge badge-blue">' + f.version_count + ' version' + (f.version_count !== 1 ? 's' : '') + '</span></td>' +
-            '<td>' + formatBytes(f.size) + '</td>' +
-            '<td>' + formatDate(f.latest_change) + '</td>' +
-            '<td><a class="btn btn-sm btn-outline" href="#versions' + esc(f.path) + '">View</a></td>' +
+            '<td data-label="Path" class="ver-path"><code>' + esc(f.path) + '</code></td>' +
+            '<td data-label="Version">v' + f.current_version + '</td>' +
+            '<td data-label="History"><span class="badge badge-blue">' + f.version_count + ' version' + (f.version_count !== 1 ? 's' : '') + '</span></td>' +
+            '<td data-label="Size">' + formatBytes(f.size) + '</td>' +
+            '<td data-label="Changed">' + formatDate(f.latest_change) + '</td>' +
+            '<td data-label=""><a class="btn btn-sm btn-outline" href="#versions' + esc(f.path) + '">View</a></td>' +
             '</tr>';
     }
 

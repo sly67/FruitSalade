@@ -56,7 +56,7 @@ function renderBrowser() {
             return a.name.localeCompare(b.name);
         });
 
-        var html = '<table><thead><tr>' +
+        var html = '<table class="responsive-table"><thead><tr>' +
             '<th>Name</th><th></th><th>Size</th><th>Version</th><th>Modified</th><th>Actions</th>' +
             '</tr></thead><tbody>';
 
@@ -100,12 +100,12 @@ function renderBrowser() {
             }
 
             html += '<tr class="file-row">' +
-                '<td>' + nameLink + '</td>' +
-                '<td>' + visBadge + '</td>' +
-                '<td>' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
-                '<td>' + (f.version || '-') + '</td>' +
-                '<td>' + formatDate(f.mod_time) + '</td>' +
-                '<td>' + actions + '</td>' +
+                '<td data-label="Name">' + nameLink + '</td>' +
+                '<td data-label="">' + visBadge + '</td>' +
+                '<td data-label="Size">' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
+                '<td data-label="Version">' + (f.version || '-') + '</td>' +
+                '<td data-label="Modified">' + formatDate(f.mod_time) + '</td>' +
+                '<td data-label="">' + actions + '</td>' +
                 '</tr>';
         }
 
@@ -395,7 +395,7 @@ function renderBrowser() {
         var total = items.length;
         var shown = items.slice(0, 200);
 
-        var html = '<table><thead><tr>' +
+        var html = '<table class="responsive-table"><thead><tr>' +
             '<th>Name</th><th>Path</th><th>Size</th><th>Modified</th>' +
             '</tr></thead><tbody>';
 
@@ -409,11 +409,11 @@ function renderBrowser() {
             var displayPath = highlightMatch(f.path, query);
 
             html += '<tr class="file-row">' +
-                '<td><a class="file-name" href="' + esc(href) + '">' +
+                '<td data-label="Name"><a class="file-name" href="' + esc(href) + '">' +
                     '<span class="file-icon">' + icon + '</span>' + displayName + '</a></td>' +
-                '<td class="search-path">' + displayPath + '</td>' +
-                '<td>' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
-                '<td>' + formatDate(f.mod_time) + '</td>' +
+                '<td data-label="Path" class="search-path">' + displayPath + '</td>' +
+                '<td data-label="Size">' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
+                '<td data-label="Modified">' + formatDate(f.mod_time) + '</td>' +
                 '</tr>';
         }
 

@@ -32,12 +32,12 @@ function loadUserList() {
         for (var i = 0; i < users.length; i++) {
             var u = users[i];
             rows += '<tr>' +
-                '<td>' + esc(u.id) + '</td>' +
-                '<td>' + esc(u.username) + '</td>' +
-                '<td>' + (u.is_admin ? '<span class="badge badge-blue">Admin</span>' : 'User') + '</td>' +
-                '<td><div class="user-groups-cell" id="user-groups-' + u.id + '"><span class="props-muted">loading...</span></div></td>' +
-                '<td>' + formatDate(u.created_at) + '</td>' +
-                '<td>' +
+                '<td data-label="ID">' + esc(u.id) + '</td>' +
+                '<td data-label="Username">' + esc(u.username) + '</td>' +
+                '<td data-label="Role">' + (u.is_admin ? '<span class="badge badge-blue">Admin</span>' : 'User') + '</td>' +
+                '<td data-label="Groups"><div class="user-groups-cell" id="user-groups-' + u.id + '"><span class="props-muted">loading...</span></div></td>' +
+                '<td data-label="Created">' + formatDate(u.created_at) + '</td>' +
+                '<td data-label="">' +
                     '<div class="btn-group">' +
                         '<button class="btn btn-sm btn-outline" data-action="manage-groups" data-id="' + u.id + '" data-name="' + esc(u.username) + '">Groups</button>' +
                         '<button class="btn btn-sm btn-outline" data-action="password" data-id="' + u.id + '">Password</button>' +
@@ -48,7 +48,7 @@ function loadUserList() {
         }
 
         document.getElementById('users-table').innerHTML =
-            '<div class="table-wrap"><table>' +
+            '<div class="table-wrap"><table class="responsive-table">' +
                 '<thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Groups</th><th>Created</th><th>Actions</th></tr></thead>' +
                 '<tbody>' + rows + '</tbody>' +
             '</table></div>';

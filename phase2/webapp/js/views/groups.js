@@ -105,14 +105,14 @@ function loadGroupList() {
         for (var i = 0; i < groups.length; i++) {
             var g = groups[i];
             rows += '<tr>' +
-                '<td>' + esc(g.id) + '</td>' +
-                '<td>' + esc(g.name) + '</td>' +
-                '<td>' + esc(g.description || '-') + '</td>' +
-                '<td>' + esc(g.parent_name || '-') + '</td>' +
-                '<td><span class="badge badge-blue">' + esc(g.member_count) + '</span></td>' +
-                '<td>' + esc(g.creator_name || '-') + '</td>' +
-                '<td>' + formatDate(g.created_at) + '</td>' +
-                '<td>' +
+                '<td data-label="ID">' + esc(g.id) + '</td>' +
+                '<td data-label="Name">' + esc(g.name) + '</td>' +
+                '<td data-label="Description">' + esc(g.description || '-') + '</td>' +
+                '<td data-label="Parent">' + esc(g.parent_name || '-') + '</td>' +
+                '<td data-label="Members"><span class="badge badge-blue">' + esc(g.member_count) + '</span></td>' +
+                '<td data-label="Creator">' + esc(g.creator_name || '-') + '</td>' +
+                '<td data-label="Created">' + formatDate(g.created_at) + '</td>' +
+                '<td data-label="">' +
                     '<div class="btn-group">' +
                         '<button class="btn btn-sm btn-outline" data-action="manage-group" data-id="' + g.id + '" data-name="' + esc(g.name) + '">Manage</button>' +
                         '<button class="btn btn-sm btn-danger" data-action="delete-group" data-id="' + g.id + '" data-name="' + esc(g.name) + '">Delete</button>' +
@@ -122,7 +122,7 @@ function loadGroupList() {
         }
 
         document.getElementById('groups-table').innerHTML =
-            '<div class="table-wrap"><table>' +
+            '<div class="table-wrap"><table class="responsive-table">' +
                 '<thead><tr><th>ID</th><th>Name</th><th>Description</th><th>Parent</th><th>Members</th><th>Creator</th><th>Created</th><th>Actions</th></tr></thead>' +
                 '<tbody>' + rows + '</tbody>' +
             '</table></div>';
@@ -318,21 +318,21 @@ function loadGroupMembers(groupID) {
         if (!members || members.length === 0) {
             html += '<p style="color:var(--text-muted);padding:0.5rem 0">No members yet.</p>';
         } else {
-            html += '<table><thead><tr><th>Username</th><th>Role</th><th>Added</th><th></th></tr></thead><tbody>';
+            html += '<table class="responsive-table"><thead><tr><th>Username</th><th>Role</th><th>Added</th><th></th></tr></thead><tbody>';
             for (var k = 0; k < members.length; k++) {
                 var m = members[k];
                 var roleClass = m.role === 'admin' ? 'badge-red' : m.role === 'editor' ? 'badge-blue' : 'badge-green';
                 html += '<tr>' +
-                    '<td>' + esc(m.username) + '</td>' +
-                    '<td>' +
+                    '<td data-label="Username">' + esc(m.username) + '</td>' +
+                    '<td data-label="Role">' +
                         '<select class="role-select" data-uid="' + m.user_id + '" style="padding:0.2rem 0.4rem;border-radius:4px;border:1px solid var(--border)">' +
                             '<option value="viewer"' + (m.role === 'viewer' ? ' selected' : '') + '>Viewer</option>' +
                             '<option value="editor"' + (m.role === 'editor' ? ' selected' : '') + '>Editor</option>' +
                             '<option value="admin"' + (m.role === 'admin' ? ' selected' : '') + '>Admin</option>' +
                         '</select>' +
                     '</td>' +
-                    '<td>' + formatDate(m.added_at) + '</td>' +
-                    '<td><button class="btn btn-sm btn-danger" data-action="remove-member" data-uid="' + m.user_id + '">Remove</button></td>' +
+                    '<td data-label="Added">' + formatDate(m.added_at) + '</td>' +
+                    '<td data-label=""><button class="btn btn-sm btn-danger" data-action="remove-member" data-uid="' + m.user_id + '">Remove</button></td>' +
                 '</tr>';
             }
             html += '</tbody></table>';
@@ -414,15 +414,15 @@ function loadGroupPermissions(groupID) {
         if (!perms || perms.length === 0) {
             html += '<p style="color:var(--text-muted);padding:0.5rem 0">No permissions set.</p>';
         } else {
-            html += '<table><thead><tr><th>Path</th><th>Permission</th><th></th></tr></thead><tbody>';
+            html += '<table class="responsive-table"><thead><tr><th>Path</th><th>Permission</th><th></th></tr></thead><tbody>';
             for (var i = 0; i < perms.length; i++) {
                 var p = perms[i];
                 var badgeClass = p.permission === 'owner' ? 'badge-red' :
                                  p.permission === 'write' ? 'badge-blue' : 'badge-green';
                 html += '<tr>' +
-                    '<td><code>' + esc(p.path) + '</code></td>' +
-                    '<td><span class="badge ' + badgeClass + '">' + esc(p.permission) + '</span></td>' +
-                    '<td><button class="btn btn-sm btn-danger" data-action="remove-perm" data-path="' + esc(p.path) + '">Remove</button></td>' +
+                    '<td data-label="Path"><code>' + esc(p.path) + '</code></td>' +
+                    '<td data-label="Permission"><span class="badge ' + badgeClass + '">' + esc(p.permission) + '</span></td>' +
+                    '<td data-label=""><button class="btn btn-sm btn-danger" data-action="remove-perm" data-path="' + esc(p.path) + '">Remove</button></td>' +
                 '</tr>';
             }
             html += '</tbody></table>';
@@ -493,14 +493,14 @@ function loadGroupSubgroups(groupID, groupName) {
         if (children.length === 0) {
             html += '<p style="color:var(--text-muted);padding:0.5rem 0">No subgroups.</p>';
         } else {
-            html += '<table><thead><tr><th>Name</th><th>Description</th><th>Members</th><th></th></tr></thead><tbody>';
+            html += '<table class="responsive-table"><thead><tr><th>Name</th><th>Description</th><th>Members</th><th></th></tr></thead><tbody>';
             for (var j = 0; j < children.length; j++) {
                 var c = children[j];
                 html += '<tr>' +
-                    '<td>' + esc(c.name) + '</td>' +
-                    '<td>' + esc(c.description || '-') + '</td>' +
-                    '<td><span class="badge badge-blue">' + c.member_count + '</span></td>' +
-                    '<td>' +
+                    '<td data-label="Name">' + esc(c.name) + '</td>' +
+                    '<td data-label="Description">' + esc(c.description || '-') + '</td>' +
+                    '<td data-label="Members"><span class="badge badge-blue">' + c.member_count + '</span></td>' +
+                    '<td data-label="">' +
                         '<button class="btn btn-sm btn-outline" data-action="manage-group" data-id="' + c.id + '" data-name="' + esc(c.name) + '">Manage</button>' +
                     '</td>' +
                 '</tr>';

@@ -28,14 +28,14 @@ function loadAdminShares() {
             var downloads = l.download_count + (l.max_downloads > 0 ? '/' + l.max_downloads : '');
 
             rows += '<tr>' +
-                '<td title="' + esc(l.id) + '">' + esc(l.id.substring(0, 12)) + '...</td>' +
-                '<td>' + esc(l.path) + '</td>' +
-                '<td>' + esc(l.created_by_username || '-') + '</td>' +
-                '<td>' + statusBadge + '</td>' +
-                '<td>' + downloads + '</td>' +
-                '<td>' + expiresAt + '</td>' +
-                '<td>' + formatDate(l.created_at) + '</td>' +
-                '<td>' +
+                '<td data-label="ID" title="' + esc(l.id) + '">' + esc(l.id.substring(0, 12)) + '...</td>' +
+                '<td data-label="Path">' + esc(l.path) + '</td>' +
+                '<td data-label="Created By">' + esc(l.created_by_username || '-') + '</td>' +
+                '<td data-label="Status">' + statusBadge + '</td>' +
+                '<td data-label="Downloads">' + downloads + '</td>' +
+                '<td data-label="Expires">' + expiresAt + '</td>' +
+                '<td data-label="Created">' + formatDate(l.created_at) + '</td>' +
+                '<td data-label="">' +
                     (l.is_active
                         ? '<button class="btn btn-sm btn-danger" data-action="revoke-share" data-id="' + esc(l.id) + '">Revoke</button>'
                         : '') +
@@ -44,7 +44,7 @@ function loadAdminShares() {
         }
 
         document.getElementById('admin-shares-table').innerHTML =
-            '<div class="table-wrap"><table>' +
+            '<div class="table-wrap"><table class="responsive-table">' +
                 '<thead><tr><th>ID</th><th>Path</th><th>Created By</th><th>Status</th><th>Downloads</th><th>Expires</th><th>Created</th><th>Actions</th></tr></thead>' +
                 '<tbody>' + rows + '</tbody>' +
             '</table></div>';
