@@ -76,10 +76,11 @@ Extend the MVP into a full-featured production system with write support, observ
 - [x] Served at `/admin/` with hash-based SPA routing
 - [x] Login with admin-only access check
 - [x] Dashboard: user count, sessions, files, storage, share links
-- [x] Users: list, create, delete, change password
+- [x] Users: list, create, delete, change password, view group memberships
 - [x] Files: browse metadata tree with breadcrumb navigation
 - [x] Share Links: list all with revoke action
-- [x] Admin API endpoints (`/api/v1/admin/{users,sharelinks,stats}`)
+- [x] Groups: tree/flat views, create/delete groups, manage members and roles, group permissions
+- [x] Admin API endpoints (`/api/v1/admin/{users,sharelinks,stats,groups,config}`)
 
 ### 2.10 CI Pipeline (Complete)
 - [x] GitHub Actions workflow (lint, test, build, Docker)
@@ -117,11 +118,33 @@ Extend the MVP into a full-featured production system with write support, observ
 - [x] Systemd template unit for FUSE clients (`fruitsalade-fuse@.service`)
 - [x] Grafana dashboard JSON (`phase2/deploy/grafana-dashboard.json`)
 
-## Planned Features
+### 2.17 User Groups & Organizations (Complete)
+- [x] Nested group hierarchy (`parent_id` — org > team > sub-team)
+- [x] RBAC roles per membership: `admin`, `editor`, `viewer`
+- [x] Role-to-permission mapping: viewer→read, editor/admin→write
+- [x] Effective role inheritance through ancestor groups
+- [x] File visibility: `public`, `group`, `private` with `group_id` ownership
+- [x] Auto-provisioning: `/{group}/shared/` on group creation, `/{group}/home/{user}/` on member add
+- [x] Cycle-prevention DB trigger on group parent changes
+- [x] Group-level path permissions (ACLs per group)
+- [x] Admin UI: tree/flat views, member management, group permissions
+- [x] Database migrations (`005_groups`, `006_nested_groups`)
 
-### Windows Client (Not Started)
-- [ ] C++ CfAPI shim
-- [ ] CGO integration
+### 2.18 File Properties (Complete)
+- [x] Aggregated file properties endpoint (`GET /api/v1/properties/{path}`)
+- [x] Returns: metadata, owner name, group name, visibility, permissions, share links, version count
+- [x] Properties modal in webapp
+
+### 2.19 Version Explorer (Complete)
+- [x] List all versioned files (`GET /api/v1/versions`)
+- [x] Webapp: browse versioned files, timeline view, inline preview, LCS-based diff
+
+### 2.20 Windows Client (Complete)
+- [x] Dual backend: CfAPI (Windows native) + cgofuse (cross-platform FUSE)
+- [x] C++ CfAPI shim for cloud files API integration
+- [x] CGO bridge between Go core and C++ shim
+- [x] Windows Service support (install/uninstall via CLI flags)
+- [x] Incremental metadata diff for placeholder updates
 
 ## API Endpoints
 
@@ -185,9 +208,47 @@ Extend the MVP into a full-featured production system with write support, observ
 | `/api/v1/admin/users` | POST | Admin | Create user `{username, password, is_admin}` |
 | `/api/v1/admin/users/{id}` | DELETE | Admin | Delete user |
 | `/api/v1/admin/users/{id}/password` | PUT | Admin | Change password `{password}` |
+| `/api/v1/admin/users/{id}/groups` | GET | Admin | List user's group memberships with roles |
 | `/api/v1/admin/sharelinks` | GET | Admin | List share links (`?active=true`) |
 | `/api/v1/admin/stats` | GET | Admin | Dashboard stats |
+| `/api/v1/admin/config` | GET | Admin | Get server configuration |
+| `/api/v1/admin/config` | PUT | Admin | Update server configuration |
 | `/admin/` | - | - | Admin web UI (auth in-app) |
+
+### Groups (Admin)
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/admin/groups` | GET | Admin | List all groups |
+| `/api/v1/admin/groups` | POST | Admin | Create group `{name, description, parent_id?}` |
+| `/api/v1/admin/groups/tree` | GET | Admin | Get nested group tree |
+| `/api/v1/admin/groups/{id}` | GET | Admin | Get group details |
+| `/api/v1/admin/groups/{id}` | DELETE | Admin | Delete group |
+| `/api/v1/admin/groups/{id}/parent` | PUT | Admin | Move group `{parent_id}` |
+| `/api/v1/admin/groups/{id}/members` | GET | Admin* | List group members |
+| `/api/v1/admin/groups/{id}/members` | POST | Admin* | Add member `{user_id, role}` |
+| `/api/v1/admin/groups/{id}/members/{uid}/role` | PUT | Admin* | Update member role `{role}` |
+| `/api/v1/admin/groups/{id}/members/{uid}` | DELETE | Admin* | Remove member |
+| `/api/v1/admin/groups/{id}/permissions` | GET | Admin* | List group path permissions |
+| `/api/v1/admin/groups/{id}/permissions/{path}` | PUT | Admin* | Set group permission `{permission}` |
+| `/api/v1/admin/groups/{id}/permissions/{path}` | DELETE | Admin* | Remove group permission |
+
+*Admin or group admin (admin role within the group)
+
+### File Properties
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/properties/{path}` | GET | Yes | Aggregated file properties (metadata, owner, group, visibility, permissions, shares, versions) |
+
+### Visibility
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/visibility/{path}` | GET | Yes | Get file visibility (`public`/`group`/`private`) |
+| `/api/v1/visibility/{path}` | PUT | Yes | Set file visibility `{visibility, group_id?}` |
+
+### Version Explorer
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/v1/versions` | GET | Yes | List all files with version history |
 
 ### Metrics
 | Endpoint | Port | Description |
@@ -307,6 +368,66 @@ curl -X POST http://localhost:8080/api/v1/admin/users \
 
 # Dashboard stats
 curl http://localhost:8080/api/v1/admin/stats \
+  -H "Authorization: Bearer $TOKEN"
+
+# ─── Groups ───────────────────────────────────────────────────────────
+
+# Create a group
+curl -X POST http://localhost:8080/api/v1/admin/groups \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"engineering","description":"Engineering team"}'
+
+# Create a child group
+curl -X POST http://localhost:8080/api/v1/admin/groups \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"backend","description":"Backend team","parent_id":1}'
+
+# Get group tree
+curl http://localhost:8080/api/v1/admin/groups/tree \
+  -H "Authorization: Bearer $TOKEN"
+
+# Add a member (role: admin, editor, or viewer)
+curl -X POST http://localhost:8080/api/v1/admin/groups/1/members \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":2,"role":"editor"}'
+
+# Update member role
+curl -X PUT http://localhost:8080/api/v1/admin/groups/1/members/2/role \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"role":"admin"}'
+
+# Set group permission on a path
+curl -X PUT http://localhost:8080/api/v1/admin/groups/1/permissions/docs \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"permission":"write"}'
+
+# ─── Visibility ───────────────────────────────────────────────────────
+
+# Set file visibility
+curl -X PUT http://localhost:8080/api/v1/visibility/docs/internal.md \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"visibility":"group","group_id":1}'
+
+# Get file visibility
+curl http://localhost:8080/api/v1/visibility/docs/internal.md \
+  -H "Authorization: Bearer $TOKEN"
+
+# ─── File Properties ─────────────────────────────────────────────────
+
+# Get aggregated file properties
+curl http://localhost:8080/api/v1/properties/test/hello.txt \
+  -H "Authorization: Bearer $TOKEN"
+
+# ─── Version Explorer ────────────────────────────────────────────────
+
+# List all versioned files
+curl http://localhost:8080/api/v1/versions \
   -H "Authorization: Bearer $TOKEN"
 
 # ─── Admin UI ──────────────────────────────────────────────────────────

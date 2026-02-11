@@ -571,8 +571,11 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}
 
-	n, _ := io.Copy(w, reader)
-	metrics.RecordContentDownload(n, true)
+	n, err := io.Copy(w, reader)
+	if err != nil {
+		logging.Warn("content transfer error", zap.String("path", r.URL.Path), zap.Error(err))
+	}
+	metrics.RecordContentDownload(n, err == nil)
 
 	// Track bandwidth
 	if claims != nil {
@@ -1005,8 +1008,11 @@ func (s *Server) handleVersionContent(w http.ResponseWriter, r *http.Request, pa
 	w.Header().Set("X-Version", strconv.Itoa(vRecord.Version))
 	w.Header().Set("X-Version-Hash", vRecord.Hash)
 
-	n, _ := io.Copy(w, reader)
-	metrics.RecordContentDownload(n, true)
+	n, err := io.Copy(w, reader)
+	if err != nil {
+		logging.Warn("version content transfer error", zap.String("path", path), zap.Error(err))
+	}
+	metrics.RecordContentDownload(n, err == nil)
 }
 
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
@@ -1298,8 +1304,11 @@ func (s *Server) handleShareDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusOK)
 
-	n, _ := io.Copy(w, reader)
-	metrics.RecordContentDownload(n, true)
+	n, err := io.Copy(w, reader)
+	if err != nil {
+		logging.Warn("share link transfer error", zap.String("token", token), zap.Error(err))
+	}
+	metrics.RecordContentDownload(n, err == nil)
 }
 
 func (s *Server) handleRevokeShareLink(w http.ResponseWriter, r *http.Request) {
@@ -1516,6 +1525,8 @@ func (s *Server) handleFileProperties(w http.ResponseWriter, r *http.Request) {
 	if node.OwnerID > 0 {
 		if name, err := s.groups.GetUsernameByID(r.Context(), node.OwnerID); err == nil {
 			resp.OwnerName = name
+		} else {
+			logging.Debug("properties: failed to resolve owner name", zap.Int("owner_id", node.OwnerID), zap.Error(err))
 		}
 	}
 
@@ -1523,6 +1534,8 @@ func (s *Server) handleFileProperties(w http.ResponseWriter, r *http.Request) {
 	if node.GroupID > 0 {
 		if name, err := s.groups.GetGroupNameByID(r.Context(), node.GroupID); err == nil {
 			resp.GroupName = name
+		} else {
+			logging.Debug("properties: failed to resolve group name", zap.Int("group_id", node.GroupID), zap.Error(err))
 		}
 	}
 
@@ -1538,6 +1551,8 @@ func (s *Server) handleFileProperties(w http.ResponseWriter, r *http.Request) {
 					Permission: p.Permission,
 				})
 			}
+		} else {
+			logging.Debug("properties: failed to list permissions", zap.String("path", path), zap.Error(err))
 		}
 
 		// Get share links
@@ -1552,6 +1567,8 @@ func (s *Server) handleFileProperties(w http.ResponseWriter, r *http.Request) {
 					CreatedAt:     l.CreatedAt,
 				})
 			}
+		} else {
+			logging.Debug("properties: failed to list share links", zap.String("path", path), zap.Error(err))
 		}
 	}
 
@@ -1559,6 +1576,8 @@ func (s *Server) handleFileProperties(w http.ResponseWriter, r *http.Request) {
 	if !node.IsDir {
 		if versions, _, err := s.storage.Metadata().ListVersions(r.Context(), path); err == nil {
 			resp.VersionCount = len(versions)
+		} else {
+			logging.Debug("properties: failed to list versions", zap.String("path", path), zap.Error(err))
 		}
 	}
 

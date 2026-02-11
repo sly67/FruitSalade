@@ -42,7 +42,12 @@ function loadGroupTree() {
         document.getElementById('groups-table').innerHTML = html;
         wireGroupTreeActions();
     }).catch(function() {
-        // Fall back to flat list
+        // Show warning and fall back to flat list
+        var alert = document.getElementById('group-alert');
+        if (alert) {
+            alert.innerHTML = '<div class="alert alert-warning">Tree view unavailable, showing flat list</div>';
+            setTimeout(function() { if (alert) alert.innerHTML = ''; }, 4000);
+        }
         loadGroupList();
     });
 }

@@ -25,6 +25,13 @@ func (s *Server) requireGroupAdmin(w http.ResponseWriter, r *http.Request, group
 		return claims
 	}
 
+	// Verify group exists before checking admin status
+	_, err := s.groups.GetGroup(r.Context(), groupID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "group not found")
+		return nil
+	}
+
 	isGA, err := s.groups.IsGroupAdmin(r.Context(), claims.UserID, groupID)
 	if err != nil || !isGA {
 		s.sendError(w, http.StatusForbidden, "admin or group admin access required")

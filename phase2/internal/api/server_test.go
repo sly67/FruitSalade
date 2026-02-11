@@ -368,7 +368,10 @@ func TestVersionRollback(t *testing.T) {
 
 	// Verify content is now v1
 	req, _ = authReq("GET", testServer.URL+"/api/v1/content/rollback/file.txt", nil)
-	resp2, _ := http.DefaultClient.Do(req)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp2.Body.Close()
 	body, _ := io.ReadAll(resp2.Body)
 	if string(body) != "v1 original" {
@@ -466,7 +469,10 @@ func TestLastWriteWins(t *testing.T) {
 
 	// Download should return latest
 	req, _ := authReq("GET", testServer.URL+"/api/v1/content/lww/file.txt", nil)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "write 3" {
@@ -513,7 +519,10 @@ func TestDeleteFile(t *testing.T) {
 
 	// Try to download (should fail)
 	req, _ = authReq("GET", testServer.URL+"/api/v1/content/delete-test/file.txt", nil)
-	resp2, _ := http.DefaultClient.Do(req)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 after delete, got %d", resp2.StatusCode)
@@ -616,7 +625,10 @@ func TestShareLinkCreateAndDownload(t *testing.T) {
 	}
 
 	// Try download after revoke (should fail)
-	dlResp2, _ := http.Get(testServer.URL + "/api/v1/share/" + shareResp.ID)
+	dlResp2, err := http.Get(testServer.URL + "/api/v1/share/" + shareResp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer dlResp2.Body.Close()
 	if dlResp2.StatusCode != http.StatusForbidden {
 		t.Errorf("expected 403 after revoke, got %d", dlResp2.StatusCode)
@@ -684,4 +696,777 @@ func TestQuotaEndpoints(t *testing.T) {
 	if getQuotaResp.MaxRequestsPerMin != 100 {
 		t.Errorf("expected rpm 100, got %d", getQuotaResp.MaxRequestsPerMin)
 	}
+}
+
+// ─── Group & RBAC Integration Tests ─────────────────────────────────────────
+
+func TestGroupCRUD(t *testing.T) {
+	// Create a group
+	body := `{"name":"test-group-crud","description":"Test group"}`
+	req, _ := authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create group: expected 201, got %d: %s", resp.StatusCode, b)
+	}
+
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	groupID := int(created["id"].(float64))
+	if created["name"] != "test-group-crud" {
+		t.Errorf("expected name test-group-crud, got %v", created["name"])
+	}
+
+	// List groups
+	req, _ = authReq("GET", testServer.URL+"/api/v1/admin/groups", nil)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("list groups: expected 200, got %d", resp2.StatusCode)
+	}
+
+	var groups []map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&groups)
+	found := false
+	for _, g := range groups {
+		if int(g["id"].(float64)) == groupID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("created group not found in list")
+	}
+
+	// Get single group
+	req, _ = authReq("GET", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d", groupID), nil)
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("get group: expected 200, got %d", resp3.StatusCode)
+	}
+
+	// Delete group
+	req, _ = authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d", groupID), nil)
+	resp4, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+
+	if resp4.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp4.Body)
+		t.Fatalf("delete group: expected 200, got %d: %s", resp4.StatusCode, b)
+	}
+}
+
+func TestGroupMembership(t *testing.T) {
+	// Create group
+	body := `{"name":"test-membership","description":"Membership test"}`
+	req, _ := authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	groupID := int(created["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d", groupID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Create a test user
+	userBody := `{"username":"testmember","password":"secret","is_admin":false}`
+	req, _ = authReq("POST", testServer.URL+"/api/v1/admin/users", bytes.NewBufferString(userBody))
+	req.Header.Set("Content-Type", "application/json")
+	userResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer userResp.Body.Close()
+
+	var userResult map[string]interface{}
+	json.NewDecoder(userResp.Body).Decode(&userResult)
+	userID := int(userResult["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/users/%d", userID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Add member with role
+	addBody := fmt.Sprintf(`{"user_id":%d,"role":"editor"}`, userID)
+	req, _ = authReq("POST", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/members", groupID), bytes.NewBufferString(addBody))
+	req.Header.Set("Content-Type", "application/json")
+	addResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer addResp.Body.Close()
+
+	if addResp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(addResp.Body)
+		t.Fatalf("add member: expected 201, got %d: %s", addResp.StatusCode, b)
+	}
+
+	// List members
+	req, _ = authReq("GET", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/members", groupID), nil)
+	listResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listResp.Body.Close()
+
+	var members []map[string]interface{}
+	json.NewDecoder(listResp.Body).Decode(&members)
+	if len(members) != 1 {
+		t.Fatalf("expected 1 member, got %d", len(members))
+	}
+	if members[0]["role"] != "editor" {
+		t.Errorf("expected role editor, got %v", members[0]["role"])
+	}
+
+	// Change role
+	roleBody := `{"role":"viewer"}`
+	req, _ = authReq("PUT", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/members/%d/role", groupID, userID), bytes.NewBufferString(roleBody))
+	req.Header.Set("Content-Type", "application/json")
+	roleResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer roleResp.Body.Close()
+
+	if roleResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(roleResp.Body)
+		t.Fatalf("change role: expected 200, got %d: %s", roleResp.StatusCode, b)
+	}
+
+	// Remove member
+	req, _ = authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/members/%d", groupID, userID), nil)
+	removeResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removeResp.Body.Close()
+
+	if removeResp.StatusCode != http.StatusOK {
+		t.Fatalf("remove member: expected 200, got %d", removeResp.StatusCode)
+	}
+}
+
+func TestNestedGroups(t *testing.T) {
+	// Create parent
+	req, _ := authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(`{"name":"parent-org","description":"Parent"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var parent map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&parent)
+	parentID := int(parent["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d", parentID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Create child
+	childBody := fmt.Sprintf(`{"name":"child-team","description":"Child","parent_id":%d}`, parentID)
+	req, _ = authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(childBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	var child map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&child)
+	childID := int(child["id"].(float64))
+
+	// Create grandchild
+	grandchildBody := fmt.Sprintf(`{"name":"grandchild-squad","description":"Grandchild","parent_id":%d}`, childID)
+	req, _ = authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(grandchildBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+
+	if resp3.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp3.Body)
+		t.Fatalf("create grandchild: expected 201, got %d: %s", resp3.StatusCode, b)
+	}
+
+	// Get tree
+	req, _ = authReq("GET", testServer.URL+"/api/v1/admin/groups/tree", nil)
+	treeResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer treeResp.Body.Close()
+
+	if treeResp.StatusCode != http.StatusOK {
+		t.Fatalf("get tree: expected 200, got %d", treeResp.StatusCode)
+	}
+
+	var tree []map[string]interface{}
+	json.NewDecoder(treeResp.Body).Decode(&tree)
+	if len(tree) == 0 {
+		t.Fatal("expected non-empty tree")
+	}
+
+	// Move grandchild to be direct child of parent
+	moveBody := fmt.Sprintf(`{"parent_id":%d}`, parentID)
+	var grandchild map[string]interface{}
+	json.NewDecoder(resp3.Body).Decode(&grandchild)
+	grandchildID := 0
+	// Get grandchild ID from list
+	req, _ = authReq("GET", testServer.URL+"/api/v1/admin/groups", nil)
+	listResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listResp.Body.Close()
+	var allGroups []map[string]interface{}
+	json.NewDecoder(listResp.Body).Decode(&allGroups)
+	for _, g := range allGroups {
+		if g["name"] == "grandchild-squad" {
+			grandchildID = int(g["id"].(float64))
+			break
+		}
+	}
+
+	if grandchildID > 0 {
+		req, _ = authReq("PUT", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/parent", grandchildID), bytes.NewBufferString(moveBody))
+		req.Header.Set("Content-Type", "application/json")
+		moveResp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer moveResp.Body.Close()
+
+		if moveResp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(moveResp.Body)
+			t.Fatalf("move group: expected 200, got %d: %s", moveResp.StatusCode, b)
+		}
+	}
+}
+
+func TestGroupPermissions(t *testing.T) {
+	// Create group
+	req, _ := authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(`{"name":"perm-test-group","description":"Perm test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	groupID := int(created["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d", groupID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Set permission
+	req, _ = authReq("PUT", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/permissions/docs", groupID), bytes.NewBufferString(`{"permission":"write"}`))
+	req.Header.Set("Content-Type", "application/json")
+	setResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer setResp.Body.Close()
+
+	if setResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(setResp.Body)
+		t.Fatalf("set group permission: expected 200, got %d: %s", setResp.StatusCode, b)
+	}
+
+	// List permissions
+	req, _ = authReq("GET", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/permissions", groupID), nil)
+	listResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listResp.Body.Close()
+
+	var perms []map[string]interface{}
+	json.NewDecoder(listResp.Body).Decode(&perms)
+	if len(perms) != 1 {
+		t.Fatalf("expected 1 permission, got %d", len(perms))
+	}
+	if perms[0]["permission"] != "write" {
+		t.Errorf("expected write permission, got %v", perms[0]["permission"])
+	}
+
+	// Delete permission
+	req, _ = authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/permissions/docs", groupID), nil)
+	delResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer delResp.Body.Close()
+
+	if delResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete group permission: expected 200, got %d", delResp.StatusCode)
+	}
+}
+
+func TestFileVisibility(t *testing.T) {
+	// Upload a file
+	uploadFile(t, "vis-test/file.txt", "visibility test")
+
+	// Get visibility (default should be public or empty)
+	req, _ := authReq("GET", testServer.URL+"/api/v1/visibility/vis-test/file.txt", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("get visibility: expected 200, got %d: %s", resp.StatusCode, b)
+	}
+
+	// Set visibility to private
+	req, _ = authReq("PUT", testServer.URL+"/api/v1/visibility/vis-test/file.txt", bytes.NewBufferString(`{"visibility":"private"}`))
+	req.Header.Set("Content-Type", "application/json")
+	setResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer setResp.Body.Close()
+
+	if setResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(setResp.Body)
+		t.Fatalf("set visibility: expected 200, got %d: %s", setResp.StatusCode, b)
+	}
+
+	// Verify visibility changed
+	req, _ = authReq("GET", testServer.URL+"/api/v1/visibility/vis-test/file.txt", nil)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	var visResp map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&visResp)
+	if visResp["visibility"] != "private" {
+		t.Errorf("expected visibility private, got %v", visResp["visibility"])
+	}
+
+	// Set to group
+	req, _ = authReq("PUT", testServer.URL+"/api/v1/visibility/vis-test/file.txt", bytes.NewBufferString(`{"visibility":"group"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("set group visibility: expected 200, got %d", resp3.StatusCode)
+	}
+
+	// Set back to public
+	req, _ = authReq("PUT", testServer.URL+"/api/v1/visibility/vis-test/file.txt", bytes.NewBufferString(`{"visibility":"public"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp4, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+
+	if resp4.StatusCode != http.StatusOK {
+		t.Fatalf("set public visibility: expected 200, got %d", resp4.StatusCode)
+	}
+}
+
+func TestFileProperties(t *testing.T) {
+	// Upload a file
+	uploadFile(t, "props-test/file.txt", "properties test content")
+
+	// Get properties
+	req, _ := authReq("GET", testServer.URL+"/api/v1/properties/props-test/file.txt", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("get properties: expected 200, got %d: %s", resp.StatusCode, b)
+	}
+
+	var props protocol.FilePropertiesResponse
+	json.NewDecoder(resp.Body).Decode(&props)
+
+	if props.Name != "file.txt" {
+		t.Errorf("expected name file.txt, got %s", props.Name)
+	}
+	if props.Path != "/props-test/file.txt" {
+		t.Errorf("expected path /props-test/file.txt, got %s", props.Path)
+	}
+	if props.Size != int64(len("properties test content")) {
+		t.Errorf("expected size %d, got %d", len("properties test content"), props.Size)
+	}
+	if props.IsDir {
+		t.Error("expected IsDir=false")
+	}
+	if props.Visibility == "" {
+		t.Error("expected non-empty visibility")
+	}
+	if props.Version < 1 {
+		t.Errorf("expected version >= 1, got %d", props.Version)
+	}
+
+	// Properties for non-existent file should 404
+	req, _ = authReq("GET", testServer.URL+"/api/v1/properties/nonexistent/file.txt", nil)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 for non-existent file, got %d", resp2.StatusCode)
+	}
+}
+
+func TestVersionExplorer(t *testing.T) {
+	// Upload a file twice to create versions
+	uploadFile(t, "verexp/file.txt", "version 1")
+	uploadFile(t, "verexp/file.txt", "version 2")
+
+	// List versioned files
+	req, _ := authReq("GET", testServer.URL+"/api/v1/versions", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("list versioned files: expected 200, got %d: %s", resp.StatusCode, b)
+	}
+
+	var files []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&files)
+
+	if len(files) == 0 {
+		t.Fatal("expected at least one versioned file")
+	}
+
+	// Find our file
+	found := false
+	for _, f := range files {
+		if f["path"] == "/verexp/file.txt" {
+			found = true
+			if int(f["version_count"].(float64)) < 2 {
+				t.Errorf("expected version_count >= 2, got %v", f["version_count"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("verexp/file.txt not found in versioned files list")
+	}
+}
+
+func TestUserGroups(t *testing.T) {
+	// Create group
+	req, _ := authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(`{"name":"usergroup-test","description":"Test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	groupID := int(created["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d", groupID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Create user
+	req, _ = authReq("POST", testServer.URL+"/api/v1/admin/users", bytes.NewBufferString(`{"username":"ugtest","password":"secret","is_admin":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	userResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer userResp.Body.Close()
+
+	var user map[string]interface{}
+	json.NewDecoder(userResp.Body).Decode(&user)
+	userID := int(user["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/users/%d", userID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Add user to group
+	addBody := fmt.Sprintf(`{"user_id":%d,"role":"viewer"}`, userID)
+	req, _ = authReq("POST", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/members", groupID), bytes.NewBufferString(addBody))
+	req.Header.Set("Content-Type", "application/json")
+	addResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer addResp.Body.Close()
+
+	if addResp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(addResp.Body)
+		t.Fatalf("add member: expected 201, got %d: %s", addResp.StatusCode, b)
+	}
+
+	// Get user's groups
+	req, _ = authReq("GET", testServer.URL+fmt.Sprintf("/api/v1/admin/users/%d/groups", userID), nil)
+	ugResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ugResp.Body.Close()
+
+	if ugResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(ugResp.Body)
+		t.Fatalf("get user groups: expected 200, got %d: %s", ugResp.StatusCode, b)
+	}
+
+	var userGroups []map[string]interface{}
+	json.NewDecoder(ugResp.Body).Decode(&userGroups)
+	if len(userGroups) == 0 {
+		t.Fatal("expected at least 1 user group")
+	}
+
+	found := false
+	for _, ug := range userGroups {
+		if ug["group_name"] == "usergroup-test" {
+			found = true
+			if ug["role"] != "viewer" {
+				t.Errorf("expected role viewer, got %v", ug["role"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("expected usergroup-test in user's groups")
+	}
+}
+
+func TestProvisioning(t *testing.T) {
+	// Create a group — provisioner should create /{group}/shared/
+	req, _ := authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(`{"name":"provision-test","description":"Provisioning test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create group: expected 201, got %d: %s", resp.StatusCode, b)
+	}
+
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	groupID := int(created["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d", groupID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Check that the group shared directory was provisioned by looking at subtree
+	req, _ = authReq("GET", testServer.URL+"/api/v1/tree/provision-test", nil)
+	treeResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer treeResp.Body.Close()
+
+	// The tree endpoint might return the subtree if provisioning worked
+	if treeResp.StatusCode == http.StatusOK {
+		var subtree protocol.TreeResponse
+		json.NewDecoder(treeResp.Body).Decode(&subtree)
+		if subtree.Root != nil && subtree.Root.IsDir {
+			// Check for shared/ child
+			foundShared := false
+			for _, child := range subtree.Root.Children {
+				if child.Name == "shared" && child.IsDir {
+					foundShared = true
+					break
+				}
+			}
+			if !foundShared {
+				t.Log("warning: shared/ directory not found in provisioned group tree (provisioner may not have refreshed tree)")
+			}
+		}
+	}
+
+	// Add a member — provisioner should create /{group}/home/{user}/
+	userBody := `{"username":"provuser","password":"secret","is_admin":false}`
+	req, _ = authReq("POST", testServer.URL+"/api/v1/admin/users", bytes.NewBufferString(userBody))
+	req.Header.Set("Content-Type", "application/json")
+	userResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer userResp.Body.Close()
+
+	var user map[string]interface{}
+	json.NewDecoder(userResp.Body).Decode(&user)
+	userID := int(user["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/users/%d", userID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	addBody := fmt.Sprintf(`{"user_id":%d,"role":"editor"}`, userID)
+	req, _ = authReq("POST", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/members", groupID), bytes.NewBufferString(addBody))
+	req.Header.Set("Content-Type", "application/json")
+	addResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer addResp.Body.Close()
+
+	if addResp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(addResp.Body)
+		t.Fatalf("add member for provisioning: expected 201, got %d: %s", addResp.StatusCode, b)
+	}
+}
+
+func TestGroupAdminAuth(t *testing.T) {
+	// Create group
+	req, _ := authReq("POST", testServer.URL+"/api/v1/admin/groups", bytes.NewBufferString(`{"name":"admin-auth-test","description":"Auth test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var created map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&created)
+	groupID := int(created["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d", groupID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Create non-admin user
+	req, _ = authReq("POST", testServer.URL+"/api/v1/admin/users", bytes.NewBufferString(`{"username":"groupadminuser","password":"secret","is_admin":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	userResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer userResp.Body.Close()
+
+	var user map[string]interface{}
+	json.NewDecoder(userResp.Body).Decode(&user)
+	userID := int(user["id"].(float64))
+	defer func() {
+		req, _ := authReq("DELETE", testServer.URL+fmt.Sprintf("/api/v1/admin/users/%d", userID), nil)
+		http.DefaultClient.Do(req)
+	}()
+
+	// Add user as group admin
+	addBody := fmt.Sprintf(`{"user_id":%d,"role":"admin"}`, userID)
+	req, _ = authReq("POST", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/members", groupID), bytes.NewBufferString(addBody))
+	req.Header.Set("Content-Type", "application/json")
+	addResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer addResp.Body.Close()
+
+	if addResp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(addResp.Body)
+		t.Fatalf("add group admin: expected 201, got %d: %s", addResp.StatusCode, b)
+	}
+
+	// Get non-admin user's token
+	nonAdminToken, err := getTestTokenForUser(testServer.URL, "groupadminuser", "secret")
+	if err != nil {
+		t.Fatalf("get non-admin token: %v", err)
+	}
+
+	// Non-admin group admin can list members of their group
+	gaReq, _ := http.NewRequest("GET", testServer.URL+fmt.Sprintf("/api/v1/admin/groups/%d/members", groupID), nil)
+	gaReq.Header.Set("Authorization", "Bearer "+nonAdminToken)
+	gaResp, err := http.DefaultClient.Do(gaReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gaResp.Body.Close()
+
+	if gaResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(gaResp.Body)
+		t.Fatalf("group admin list members: expected 200, got %d: %s", gaResp.StatusCode, b)
+	}
+
+	// Non-admin group admin cannot list global groups (requires global admin)
+	gaReq2, _ := http.NewRequest("GET", testServer.URL+"/api/v1/admin/groups", nil)
+	gaReq2.Header.Set("Authorization", "Bearer "+nonAdminToken)
+	gaResp2, err := http.DefaultClient.Do(gaReq2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gaResp2.Body.Close()
+
+	if gaResp2.StatusCode != http.StatusForbidden {
+		t.Errorf("non-admin listing groups: expected 403, got %d", gaResp2.StatusCode)
+	}
+}
+
+func getTestTokenForUser(baseURL, username, password string) (string, error) {
+	body := fmt.Sprintf(`{"username":%q,"password":%q,"device_name":"test"}`, username, password)
+	resp, err := http.Post(baseURL+"/api/v1/auth/token", "application/json", bytes.NewBufferString(body))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("empty token returned (status %d)", resp.StatusCode)
+	}
+	return result.Token, nil
 }

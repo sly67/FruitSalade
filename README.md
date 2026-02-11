@@ -25,6 +25,11 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **Pin/unpin CLI** -- pin files for permanent local caching via FUSE client subcommands
 - **Grafana dashboard** -- pre-built JSON dashboard for all Prometheus metrics
 - **Systemd service files** -- server and FUSE client template units for production deployment
+- **User groups** -- nested group hierarchy with RBAC roles (admin/editor/viewer) and auto-provisioning
+- **File visibility** -- per-file visibility (public/group/private) with group ownership
+- **File properties** -- aggregated metadata, ownership, permissions, shares, and version count
+- **Version explorer** -- browse all versioned files with timeline, preview, and diff
+- **Windows client** -- CfAPI + cgofuse dual backend with Windows Service support
 - **CI pipeline** -- GitHub Actions (lint, test, build, Docker)
 - **Docker-ready** -- full test environment with compose (server, 2 FUSE clients, PostgreSQL, MinIO)
 
@@ -202,9 +207,35 @@ Content responses include `ETag` (SHA256 hash) and `X-Version` headers.
 | `/api/v1/admin/users` | POST | Create user `{username, password, is_admin}` (admin) |
 | `/api/v1/admin/users/{id}` | DELETE | Delete user (admin) |
 | `/api/v1/admin/users/{id}/password` | PUT | Change password `{password}` (admin) |
+| `/api/v1/admin/users/{id}/groups` | GET | List user's group memberships (admin) |
 | `/api/v1/admin/sharelinks` | GET | List all share links (admin) |
 | `/api/v1/admin/stats` | GET | Dashboard stats (admin) |
+| `/api/v1/admin/config` | GET/PUT | Get/update server configuration (admin) |
 | `/admin/` | - | Admin web UI |
+
+### Groups (Admin)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/admin/groups` | GET | List all groups |
+| `/api/v1/admin/groups` | POST | Create group `{name, description, parent_id?}` |
+| `/api/v1/admin/groups/tree` | GET | Nested group tree |
+| `/api/v1/admin/groups/{id}` | GET | Get group details |
+| `/api/v1/admin/groups/{id}` | DELETE | Delete group |
+| `/api/v1/admin/groups/{id}/parent` | PUT | Move group `{parent_id}` |
+| `/api/v1/admin/groups/{id}/members` | GET/POST | List/add members |
+| `/api/v1/admin/groups/{id}/members/{uid}/role` | PUT | Update member role |
+| `/api/v1/admin/groups/{id}/members/{uid}` | DELETE | Remove member |
+| `/api/v1/admin/groups/{id}/permissions/{path}` | GET/PUT/DELETE | Group path permissions |
+
+### File Properties & Visibility
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/properties/{path}` | GET | Aggregated file properties |
+| `/api/v1/visibility/{path}` | GET | Get file visibility |
+| `/api/v1/visibility/{path}` | PUT | Set visibility `{visibility, group_id?}` |
+| `/api/v1/versions` | GET | List all versioned files |
 
 ### Conflict Detection
 
@@ -325,5 +356,4 @@ make clean               # Remove build artifacts
 |-------|-------|--------|
 | **Phase 0** | Proof of Concept -- local filesystem backend, basic FUSE | Complete |
 | **Phase 1** | MVP -- PostgreSQL, S3, JWT auth, Docker test env | Complete |
-| **Phase 2** | Production -- metrics, logging, write ops, versioning, sharing, quotas, admin UI | Complete |
-| **Phase 3** | Multi-platform -- Windows CfAPI client | Planned |
+| **Phase 2** | Production -- metrics, logging, write ops, versioning, sharing, quotas, groups, admin UI, Windows client | Complete |

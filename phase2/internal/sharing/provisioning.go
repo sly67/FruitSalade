@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
+
+	"github.com/fruitsalade/fruitsalade/phase2/internal/logging"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metadata/postgres"
 )
 
@@ -89,12 +92,14 @@ func (p *Provisioner) ProvisionUserHome(ctx context.Context, userID, groupID int
 func (p *Provisioner) DeprovisionUserHome(ctx context.Context, userID, groupID int) error {
 	topGroup, err := p.groups.GetTopLevelGroup(ctx, groupID)
 	if err != nil {
-		return nil // group might already be deleted
+		logging.Debug("deprovision: group not found (may be deleted)", zap.Int("group_id", groupID), zap.Error(err))
+		return nil
 	}
 
 	username, err := p.groups.GetUsernameByID(ctx, userID)
 	if err != nil {
-		return nil // user might already be deleted
+		logging.Debug("deprovision: user not found (may be deleted)", zap.Int("user_id", userID), zap.Error(err))
+		return nil
 	}
 
 	userHomePath := "/" + topGroup.Name + "/home/" + username
