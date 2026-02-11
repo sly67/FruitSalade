@@ -9,11 +9,12 @@
         'dashboard':    renderDashboard,
         'users':        renderUsers,
         'admin-shares': renderAdminShares,
+        'groups':       renderGroups,
         'settings':     renderSettings
     };
 
     // Admin-only routes
-    var adminRoutes = ['dashboard', 'users', 'admin-shares', 'settings'];
+    var adminRoutes = ['dashboard', 'users', 'groups', 'admin-shares', 'settings'];
 
     function isAdmin() {
         return sessionStorage.getItem('is_admin') === 'true';
@@ -59,8 +60,15 @@
             // Update nav links visibility based on admin status
             updateNavLinks();
 
-            // Render sidebar tree
-            TreeView.renderTree();
+            // Show sidebar tree only on file-related routes
+            var sidebar = document.getElementById('sidebar');
+            var treeRoutes = ['browser', 'viewer', 'versions'];
+            if (treeRoutes.indexOf(route) !== -1) {
+                sidebar.classList.remove('hidden');
+                TreeView.renderTree();
+            } else {
+                sidebar.classList.add('hidden');
+            }
         }
 
         // Highlight active nav link

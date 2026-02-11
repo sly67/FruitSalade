@@ -12,9 +12,11 @@ type FileNode struct {
 	ModTime  time.Time   `json:"mtime"`
 	IsDir    bool        `json:"is_dir"`
 	Hash     string      `json:"hash,omitempty"`
-	Version  int         `json:"version,omitempty"`
-	OwnerID  int         `json:"owner_id,omitempty"`
-	Children []*FileNode `json:"children,omitempty"`
+	Version    int         `json:"version,omitempty"`
+	OwnerID    int         `json:"owner_id,omitempty"`
+	Visibility string      `json:"visibility,omitempty"`
+	GroupID    int         `json:"group_id,omitempty"`
+	Children   []*FileNode `json:"children,omitempty"`
 }
 
 // CacheEntry represents a cached file on the client.

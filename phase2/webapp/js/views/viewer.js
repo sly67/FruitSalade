@@ -22,16 +22,26 @@ function renderViewer() {
         '<div class="viewer-meta" id="viewer-meta"></div>' +
         '<div class="viewer-content" id="viewer-content">Loading...</div>';
 
-    // Load metadata for info bar
-    var apiPath = '/api/v1/tree/' + API.encodeURIPath(filePath.replace(/^\//, ''));
-    API.get(apiPath).then(function(data) {
-        var node = data.root;
-        if (node) {
+    // Load properties for info bar
+    var propsPath = '/api/v1/properties/' + API.encodeURIPath(filePath.replace(/^\//, ''));
+    API.get(propsPath).then(function(data) {
+        if (data && !data.error) {
             var meta = document.getElementById('viewer-meta');
-            meta.innerHTML =
-                '<span>Size: ' + formatBytes(node.size) + '</span>' +
-                '<span>Version: v' + (node.version || 1) + '</span>' +
-                '<span>Modified: ' + formatDate(node.mod_time) + '</span>';
+            var visIcon = data.visibility === 'private' ? '&#128274;' : (data.visibility === 'group' ? '&#128101;' : '&#127760;');
+            var visClass = 'vis-' + (data.visibility || 'public');
+            var parts = [];
+            parts.push('<span>Size: ' + formatBytes(data.size) + '</span>');
+            parts.push('<span>Version: v' + (data.version || 1) + '</span>');
+            parts.push('<span>Modified: ' + formatDate(data.mod_time) + '</span>');
+            if (data.owner_name) {
+                parts.push('<span>Owner: ' + esc(data.owner_name) + '</span>');
+            }
+            if (data.group_name) {
+                parts.push('<span>Group: ' + esc(data.group_name) + '</span>');
+            }
+            parts.push('<span><span class="vis-badge ' + visClass + '">' + visIcon + '</span> ' +
+                esc((data.visibility || 'public').charAt(0).toUpperCase() + (data.visibility || 'public').slice(1)) + '</span>');
+            meta.innerHTML = parts.join('');
         }
     }).catch(function() {});
 

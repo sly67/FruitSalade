@@ -8,11 +8,18 @@ import (
 	"strings"
 
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metrics"
+	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
 )
 
 // PermissionStore manages file access permissions.
 type PermissionStore struct {
-	db *sql.DB
+	db     *sql.DB
+	groups *GroupStore
+}
+
+// SetGroupStore sets the group store for group-based permission checks.
+func (s *PermissionStore) SetGroupStore(gs *GroupStore) {
+	s.groups = gs
 }
 
 // NewPermissionStore creates a new permission store.
@@ -80,6 +87,7 @@ func (s *PermissionStore) ListPermissions(ctx context.Context, path string) ([]P
 // CheckAccess checks if a user has at least the given permission on a path.
 // Supports path inheritance: permission on "/docs" grants access to "/docs/readme.md".
 // Admins always have access. File owners always have access.
+// Now also checks group role-based access for files with group_id.
 func (s *PermissionStore) CheckAccess(ctx context.Context, userID int, path string, requiredPerm string, isAdmin bool) bool {
 	// Admins bypass all checks
 	if isAdmin {
@@ -98,7 +106,7 @@ func (s *PermissionStore) CheckAccess(ctx context.Context, userID int, path stri
 
 	// Check direct and inherited permissions
 	// Build path segments: /a/b/c -> ["/a/b/c", "/a/b", "/a", "/"]
-	segments := pathSegments(path)
+	segments := PathSegments(path)
 
 	for _, seg := range segments {
 		var perm string
@@ -110,7 +118,33 @@ func (s *PermissionStore) CheckAccess(ctx context.Context, userID int, path stri
 			continue
 		}
 
-		if permissionSatisfies(perm, requiredPerm) {
+		if PermissionSatisfies(perm, requiredPerm) {
+			metrics.RecordPermissionCheck(true)
+			return true
+		}
+	}
+
+	// Check group role-based access for files with group_id
+	if s.groups != nil {
+		var groupID sql.NullInt64
+		err := s.db.QueryRowContext(ctx,
+			`SELECT group_id FROM files WHERE path = $1`, path).Scan(&groupID)
+		if err == nil && groupID.Valid {
+			role, err := s.groups.GetUserEffectiveRole(ctx, userID, int(groupID.Int64))
+			if err == nil && role != "" {
+				mappedPerm := RoleToPermission(role)
+				if PermissionSatisfies(mappedPerm, requiredPerm) {
+					metrics.RecordPermissionCheck(true)
+					return true
+				}
+			}
+		}
+	}
+
+	// Check group permissions (explicit path-based)
+	if s.groups != nil {
+		hasGroupAccess, err := s.groups.CheckGroupAccess(ctx, userID, path, requiredPerm)
+		if err == nil && hasGroupAccess {
 			metrics.RecordPermissionCheck(true)
 			return true
 		}
@@ -131,9 +165,88 @@ func (s *PermissionStore) GetOwnerID(ctx context.Context, path string) (int, boo
 	return int(ownerID.Int64), true
 }
 
-// pathSegments returns all path prefixes from most specific to least.
+// ─── Visibility ─────────────────────────────────────────────────────────────
+
+// CheckVisibility returns true if the user can see this node based on visibility.
+func (s *PermissionStore) CheckVisibility(node *models.FileNode, userID int, isAdmin bool, userGroups map[int]string) bool {
+	if isAdmin {
+		return true
+	}
+
+	vis := node.Visibility
+	if vis == "" || vis == "public" {
+		return true
+	}
+
+	if vis == "private" {
+		return node.OwnerID == userID
+	}
+
+	if vis == "group" {
+		if node.GroupID == 0 {
+			return true // no group_id set, treat as public
+		}
+		_, isMember := userGroups[node.GroupID]
+		return isMember
+	}
+
+	return true
+}
+
+// SetVisibility sets the visibility of a file/folder.
+func (s *PermissionStore) SetVisibility(ctx context.Context, path, visibility string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE files SET visibility = $2 WHERE path = $1`,
+		path, visibility)
+	if err != nil {
+		return fmt.Errorf("set visibility: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("file not found: %s", path)
+	}
+	return nil
+}
+
+// GetVisibility returns the visibility of a file/folder.
+func (s *PermissionStore) GetVisibility(ctx context.Context, path string) (string, error) {
+	var vis string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT visibility FROM files WHERE path = $1`, path).Scan(&vis)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("file not found: %s", path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("get visibility: %w", err)
+	}
+	return vis, nil
+}
+
+// GetUserPermissionsMap returns all file permissions for a user as a map[path]permission.
+func (s *PermissionStore) GetUserPermissionsMap(ctx context.Context, userID int) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT path, permission FROM file_permissions WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user permissions map: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var path, perm string
+		if err := rows.Scan(&path, &perm); err != nil {
+			return nil, err
+		}
+		result[path] = perm
+	}
+	return result, rows.Err()
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+// PathSegments returns all path prefixes from most specific to least.
 // "/a/b/c" -> ["/a/b/c", "/a/b", "/a", "/"]
-func pathSegments(path string) []string {
+func PathSegments(path string) []string {
 	segments := []string{path}
 	for {
 		idx := strings.LastIndex(path, "/")
@@ -149,9 +262,9 @@ func pathSegments(path string) []string {
 	return segments
 }
 
-// permissionSatisfies checks if `has` satisfies `required`.
+// PermissionSatisfies checks if `has` satisfies `required`.
 // owner > write > read
-func permissionSatisfies(has, required string) bool {
+func PermissionSatisfies(has, required string) bool {
 	levels := map[string]int{"read": 1, "write": 2, "owner": 3}
 	return levels[has] >= levels[required]
 }

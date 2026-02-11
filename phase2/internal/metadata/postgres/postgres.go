@@ -34,8 +34,10 @@ type FileRow struct {
 	IsDir      bool
 	Hash       string
 	S3Key      string
-	Version    int // Phase 2: versioning support
-	OwnerID    *int // Phase 2: file ownership
+	Version    int    // Phase 2: versioning support
+	OwnerID    *int   // Phase 2: file ownership
+	Visibility string // "public", "group", "private"
+	GroupID    *int
 }
 
 // New creates a new PostgreSQL metadata store.
@@ -102,7 +104,7 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 	}()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id
+		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id
 		 FROM files ORDER BY path`)
 	if err != nil {
 		return nil, fmt.Errorf("query files: %w", err)
@@ -115,14 +117,24 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 
 	for rows.Next() {
 		var r FileRow
-		var ownerID sql.NullInt64
+		var ownerID, groupID sql.NullInt64
+		var visibility sql.NullString
 		if err := rows.Scan(&r.ID, &r.Name, &r.Path, &r.ParentPath,
-			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID); err != nil {
+			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID, &visibility, &groupID); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
 		if ownerID.Valid {
 			oid := int(ownerID.Int64)
 			r.OwnerID = &oid
+		}
+		if visibility.Valid {
+			r.Visibility = visibility.String
+		} else {
+			r.Visibility = "public"
+		}
+		if groupID.Valid {
+			gid := int(groupID.Int64)
+			r.GroupID = &gid
 		}
 		allRows = append(allRows, r)
 		nodeMap[r.Path] = rowToNode(&r)
@@ -197,12 +209,13 @@ func (s *Store) GetFileRow(ctx context.Context, path string) (*FileRow, error) {
 
 	path = normalizePath(path)
 	var r FileRow
-	var ownerID sql.NullInt64
+	var ownerID, groupID sql.NullInt64
+	var visibility sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id
+		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id
 		 FROM files WHERE path = $1`, path).
 		Scan(&r.ID, &r.Name, &r.Path, &r.ParentPath,
-			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID)
+			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID, &visibility, &groupID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -212,6 +225,15 @@ func (s *Store) GetFileRow(ctx context.Context, path string) (*FileRow, error) {
 	if ownerID.Valid {
 		oid := int(ownerID.Int64)
 		r.OwnerID = &oid
+	}
+	if visibility.Valid {
+		r.Visibility = visibility.String
+	} else {
+		r.Visibility = "public"
+	}
+	if groupID.Valid {
+		gid := int(groupID.Int64)
+		r.GroupID = &gid
 	}
 	return &r, nil
 }
@@ -283,8 +305,8 @@ func (s *Store) UpsertFile(ctx context.Context, f *FileRow) error {
 	defer func() { metrics.RecordDBQuery("upsert_file", time.Since(start)) }()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
 		 ON CONFLICT (path) DO UPDATE SET
 			name = EXCLUDED.name,
 			size = EXCLUDED.size,
@@ -293,8 +315,10 @@ func (s *Store) UpsertFile(ctx context.Context, f *FileRow) error {
 			s3_key = EXCLUDED.s3_key,
 			version = EXCLUDED.version,
 			owner_id = COALESCE(files.owner_id, EXCLUDED.owner_id),
+			visibility = COALESCE(NULLIF(EXCLUDED.visibility, ''), files.visibility),
+			group_id = COALESCE(EXCLUDED.group_id, files.group_id),
 			updated_at = NOW()`,
-		f.ID, f.Name, f.Path, f.ParentPath, f.Size, f.ModTime, f.IsDir, f.Hash, f.S3Key, f.Version, f.OwnerID)
+		f.ID, f.Name, f.Path, f.ParentPath, f.Size, f.ModTime, f.IsDir, f.Hash, f.S3Key, f.Version, f.OwnerID, f.Visibility, f.GroupID)
 	if err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}
@@ -359,17 +383,21 @@ func (s *Store) PathExists(ctx context.Context, path string) (bool, error) {
 
 func rowToNode(r *FileRow) *models.FileNode {
 	node := &models.FileNode{
-		ID:      r.ID,
-		Name:    r.Name,
-		Path:    r.Path,
-		Size:    r.Size,
-		ModTime: r.ModTime,
-		IsDir:   r.IsDir,
-		Hash:    r.Hash,
-		Version: r.Version,
+		ID:         r.ID,
+		Name:       r.Name,
+		Path:       r.Path,
+		Size:       r.Size,
+		ModTime:    r.ModTime,
+		IsDir:      r.IsDir,
+		Hash:       r.Hash,
+		Version:    r.Version,
+		Visibility: r.Visibility,
 	}
 	if r.OwnerID != nil {
 		node.OwnerID = *r.OwnerID
+	}
+	if r.GroupID != nil {
+		node.GroupID = *r.GroupID
 	}
 	return node
 }

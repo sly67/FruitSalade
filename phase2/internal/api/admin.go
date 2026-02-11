@@ -10,6 +10,7 @@ import (
 
 	"github.com/fruitsalade/fruitsalade/phase2/internal/auth"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/logging"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/sharing"
 )
 
 // requireAdmin checks that the request is from an admin user.
@@ -138,6 +139,33 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ─── Admin: User Groups ─────────────────────────────────────────────────────
+
+func (s *Server) handleUserGroups(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdmin(w, r) == nil {
+		return
+	}
+
+	userID, err := strconv.Atoi(r.PathValue("userID"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	memberships, err := s.groups.GetUserGroupsWithRoles(r.Context(), userID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get user groups: "+err.Error())
+		return
+	}
+
+	if memberships == nil {
+		memberships = []sharing.UserGroupMembership{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(memberships)
+}
+
 // ─── Admin: Share Links ─────────────────────────────────────────────────────
 
 func (s *Server) handleListShareLinks(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +208,9 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM share_links WHERE is_active = TRUE`).Scan(&activeShareLinks)
 	db.QueryRowContext(ctx, `SELECT COUNT(*) FROM share_links`).Scan(&totalShareLinks)
 
+	// Group count
+	groupCount, _ := s.groups.GroupCount(ctx)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"users":              userCount,
@@ -188,6 +219,7 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		"total_storage":      totalStorage,
 		"active_share_links": activeShareLinks,
 		"total_share_links":  totalShareLinks,
+		"groups":             groupCount,
 	})
 }
 

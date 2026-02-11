@@ -70,6 +70,9 @@ func TestMain(m *testing.M) {
 	testDB = db
 
 	// Clean and set up schema
+	db.ExecContext(ctx, "DROP TABLE IF EXISTS group_permissions CASCADE")
+	db.ExecContext(ctx, "DROP TABLE IF EXISTS group_members CASCADE")
+	db.ExecContext(ctx, "DROP TABLE IF EXISTS groups CASCADE")
 	db.ExecContext(ctx, "DROP TABLE IF EXISTS bandwidth_usage CASCADE")
 	db.ExecContext(ctx, "DROP TABLE IF EXISTS user_quotas CASCADE")
 	db.ExecContext(ctx, "DROP TABLE IF EXISTS share_links CASCADE")
@@ -134,10 +137,14 @@ func TestMain(m *testing.M) {
 	rateLimiter := quota.NewRateLimiter(quotaStore)
 
 	// Create server
+	groupStore := sharing.NewGroupStore(db)
+	permissionStore.SetGroupStore(groupStore)
+	provisioner := sharing.NewProvisioner(groupStore, metaStore, permissionStore)
 	srv := NewServer(
 		storage, authHandler, 10*1024*1024,
 		broadcaster, permissionStore, shareLinkStore,
-		quotaStore, rateLimiter, nil,
+		quotaStore, rateLimiter, groupStore, nil,
+		provisioner,
 	)
 	if err := srv.Init(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "SKIP: server init failed: %v\n", err)

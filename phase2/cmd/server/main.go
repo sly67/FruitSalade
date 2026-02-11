@@ -118,18 +118,25 @@ func main() {
 	db := metaStore.DB()
 	permissionStore := sharing.NewPermissionStore(db)
 	shareLinkStore := sharing.NewShareLinkStore(db)
-	logging.Info("sharing stores initialized")
+	groupStore := sharing.NewGroupStore(db)
+	permissionStore.SetGroupStore(groupStore)
+	logging.Info("sharing stores initialized (with groups)")
 
 	// Initialize quota store and rate limiter
 	quotaStore := quota.NewQuotaStore(db)
 	rateLimiter := quota.NewRateLimiter(quotaStore)
 	logging.Info("quota and rate limiter initialized")
 
+	// Create provisioner for auto-provisioning group folders and home directories
+	provisioner := sharing.NewProvisioner(groupStore, metaStore, permissionStore)
+	logging.Info("provisioner initialized")
+
 	// Create API server
 	srv := api.NewServer(
 		storage, authHandler, cfg.MaxUploadSize,
 		broadcaster, permissionStore, shareLinkStore,
-		quotaStore, rateLimiter, cfg,
+		quotaStore, rateLimiter, groupStore, cfg,
+		provisioner,
 	)
 	if err := srv.Init(ctx); err != nil {
 		logging.Fatal("server init failed", zap.Error(err))

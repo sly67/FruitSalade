@@ -127,3 +127,88 @@ type UsageResponse struct {
 	BandwidthToday  int64 `json:"bandwidth_today"`
 	Quota           UserQuotaResponse `json:"quota"`
 }
+
+// GroupRequest is the body for POST /api/v1/admin/groups.
+type GroupRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ParentID    *int   `json:"parent_id,omitempty"`
+}
+
+// GroupMemberRequest is the body for POST /api/v1/admin/groups/{id}/members.
+type GroupMemberRequest struct {
+	UserID int    `json:"user_id"`
+	Role   string `json:"role"` // "admin"|"editor"|"viewer", default "viewer"
+}
+
+// SetVisibilityRequest is the body for PUT /api/v1/visibility/{path}.
+type SetVisibilityRequest struct {
+	Visibility string `json:"visibility"` // "public"|"group"|"private"
+}
+
+// GroupTreeNode represents a group in a nested tree.
+type GroupTreeNode struct {
+	ID          int             `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	MemberCount int             `json:"member_count"`
+	Children    []GroupTreeNode `json:"children,omitempty"`
+}
+
+// UpdateRoleRequest is the body for PUT /api/v1/admin/groups/{id}/members/{uid}/role.
+type UpdateRoleRequest struct {
+	Role string `json:"role"` // "admin"|"editor"|"viewer"
+}
+
+// MoveGroupRequest is the body for PUT /api/v1/admin/groups/{id}/parent.
+type MoveGroupRequest struct {
+	ParentID *int `json:"parent_id"` // nil = make top-level
+}
+
+// GroupPermissionRequest is the body for PUT /api/v1/admin/groups/{id}/permissions/{path}.
+type GroupPermissionRequest struct {
+	Permission string `json:"permission"`
+}
+
+// FilePropertiesResponse is returned by GET /api/v1/properties/{path}.
+type FilePropertiesResponse struct {
+	// Core metadata
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Path     string    `json:"path"`
+	Size     int64     `json:"size"`
+	ModTime  time.Time `json:"mod_time"`
+	IsDir    bool      `json:"is_dir"`
+	Hash     string    `json:"hash,omitempty"`
+	Version  int       `json:"version"`
+
+	// Ownership
+	OwnerID   int    `json:"owner_id,omitempty"`
+	OwnerName string `json:"owner_name,omitempty"`
+
+	// Group
+	GroupID   int    `json:"group_id,omitempty"`
+	GroupName string `json:"group_name,omitempty"`
+
+	// Visibility
+	Visibility string `json:"visibility"`
+
+	// Permissions
+	Permissions []PermissionResponse `json:"permissions,omitempty"`
+
+	// Share links
+	ShareLinks []ShareLinkInfo `json:"share_links,omitempty"`
+
+	// Versions
+	VersionCount int `json:"version_count"`
+}
+
+// ShareLinkInfo is a summary of an active share link for properties display.
+type ShareLinkInfo struct {
+	ID            string     `json:"id"`
+	CreatedBy     string     `json:"created_by"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	MaxDownloads  int        `json:"max_downloads"`
+	DownloadCount int        `json:"download_count"`
+	CreatedAt     time.Time  `json:"created_at"`
+}

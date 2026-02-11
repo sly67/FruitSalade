@@ -7,7 +7,10 @@ function renderBrowser() {
         '<div class="toolbar">' +
             '<h2>Files</h2>' +
             '<div class="toolbar-actions">' +
-                '<input type="text" id="search-input" placeholder="Filter by name...">' +
+                '<div class="search-wrap">' +
+                    '<input type="text" id="search-input" placeholder="Search all files...">' +
+                    '<button class="btn btn-sm btn-outline" id="btn-clear-search" style="display:none" title="Clear">&times;</button>' +
+                '</div>' +
                 '<button class="btn btn-sm" id="btn-new-folder">New Folder</button>' +
                 '<button class="btn btn-sm" id="btn-upload">Upload</button>' +
                 '<input type="file" id="file-input" multiple style="display:none">' +
@@ -54,7 +57,7 @@ function renderBrowser() {
         });
 
         var html = '<table><thead><tr>' +
-            '<th>Name</th><th>Size</th><th>Version</th><th>Modified</th><th>Actions</th>' +
+            '<th>Name</th><th></th><th>Size</th><th>Version</th><th>Modified</th><th>Actions</th>' +
             '</tr></thead><tbody>';
 
         for (var i = 0; i < items.length; i++) {
@@ -69,24 +72,36 @@ function renderBrowser() {
                     '<span class="file-icon">' + icon + '</span>' + esc(f.name) + '</a>';
             }
 
+            // Visibility badge
+            var visBadge = '';
+            if (f.visibility === 'private') {
+                visBadge = '<span class="vis-badge vis-private" title="Private">&#128274;</span>';
+            } else if (f.visibility === 'group') {
+                visBadge = '<span class="vis-badge vis-group" title="Group">&#128101;</span>';
+            } else if (f.visibility && f.visibility !== 'public') {
+                visBadge = '<span class="vis-badge vis-public" title="Public">&#127760;</span>';
+            }
+
             var actions = '';
             if (!f.is_dir) {
                 actions =
                     '<div class="btn-group">' +
+                        '<button class="btn btn-sm btn-outline" data-action="properties" data-path="' + esc(f.path) + '">Properties</button>' +
                         '<button class="btn btn-sm btn-outline" data-action="download" data-path="' + esc(f.path) + '">Download</button>' +
                         '<button class="btn btn-sm btn-outline" data-action="share" data-path="' + esc(f.path) + '">Share</button>' +
-                        '<button class="btn btn-sm btn-outline" data-action="history" data-path="' + esc(f.path) + '">History</button>' +
                         '<button class="btn btn-sm btn-danger" data-action="delete" data-path="' + esc(f.path) + '">Delete</button>' +
                     '</div>';
             } else {
                 actions =
                     '<div class="btn-group">' +
+                        '<button class="btn btn-sm btn-outline" data-action="properties" data-path="' + esc(f.path) + '">Properties</button>' +
                         '<button class="btn btn-sm btn-danger" data-action="delete" data-path="' + esc(f.path) + '">Delete</button>' +
                     '</div>';
             }
 
             html += '<tr class="file-row">' +
                 '<td>' + nameLink + '</td>' +
+                '<td>' + visBadge + '</td>' +
                 '<td>' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
                 '<td>' + (f.version || '-') + '</td>' +
                 '<td>' + formatDate(f.mod_time) + '</td>' +
@@ -102,12 +117,13 @@ function renderBrowser() {
             btn.addEventListener('click', function(e) {
                 var action = e.currentTarget.getAttribute('data-action');
                 var path = e.currentTarget.getAttribute('data-path');
-                handleAction(action, path);
+                var vis = e.currentTarget.getAttribute('data-vis');
+                handleAction(action, path, vis);
             });
         });
     }
 
-    function handleAction(action, path) {
+    function handleAction(action, path, extraData) {
         if (action === 'download') {
             var a = document.createElement('a');
             a.href = API.downloadUrl(path.replace(/^\//, ''));
@@ -128,6 +144,10 @@ function renderBrowser() {
             showShareModal(path);
         } else if (action === 'history') {
             window.location.hash = '#versions' + path;
+        } else if (action === 'visibility') {
+            showVisibilityModal(path, extraData);
+        } else if (action === 'properties') {
+            showPropertiesModal(path);
         }
     }
 
@@ -281,18 +301,360 @@ function renderBrowser() {
         }
     }
 
-    // Search/filter
+    // Global search
+    var searchTimer = null;
+    var isSearching = false;
+    var clearBtn = document.getElementById('btn-clear-search');
+
     searchInput.addEventListener('input', function() {
-        var q = searchInput.value.toLowerCase();
+        var q = searchInput.value.trim();
+        clearTimeout(searchTimer);
+
         if (!q) {
-            renderTable(allItems);
+            clearSearch();
             return;
         }
-        var filtered = allItems.filter(function(f) {
-            return f.name.toLowerCase().indexOf(q) !== -1;
+
+        clearBtn.style.display = 'inline-flex';
+
+        // Debounce: local filter immediately, global search after 300ms
+        var localQ = q.toLowerCase();
+        var localFiltered = allItems.filter(function(f) {
+            return f.name.toLowerCase().indexOf(localQ) !== -1;
         });
-        renderTable(filtered);
+        if (!isSearching) {
+            renderTable(localFiltered);
+        }
+
+        searchTimer = setTimeout(function() {
+            globalSearch(q);
+        }, 300);
     });
+
+    clearBtn.addEventListener('click', function() {
+        searchInput.value = '';
+        clearSearch();
+        searchInput.focus();
+    });
+
+    function clearSearch() {
+        isSearching = false;
+        clearBtn.style.display = 'none';
+        document.getElementById('breadcrumb').classList.remove('hidden');
+        renderTable(allItems);
+    }
+
+    function globalSearch(query) {
+        isSearching = true;
+        var q = query.toLowerCase();
+        var bc = document.getElementById('breadcrumb');
+        bc.classList.add('hidden');
+
+        API.get('/api/v1/tree').then(function(data) {
+            if (data.error) return;
+            var flat = [];
+            flattenTree(data.root, flat);
+            var results = flat.filter(function(f) {
+                return f.name.toLowerCase().indexOf(q) !== -1 ||
+                       f.path.toLowerCase().indexOf(q) !== -1;
+            });
+            renderSearchResults(results, query);
+        });
+    }
+
+    function flattenTree(node, out) {
+        if (!node) return;
+        if (node.path && node.path !== '/') {
+            out.push(node);
+        }
+        if (node.children) {
+            for (var i = 0; i < node.children.length; i++) {
+                flattenTree(node.children[i], out);
+            }
+        }
+    }
+
+    function renderSearchResults(items, query) {
+        // Check search is still active
+        if (!isSearching) return;
+
+        var table = document.getElementById('file-table');
+        if (!items || items.length === 0) {
+            table.innerHTML = '<p style="padding:1.5rem;color:var(--text-muted)">No results for "' + esc(query) + '"</p>';
+            return;
+        }
+
+        // Sort: dirs first, then by path
+        items.sort(function(a, b) {
+            if (a.is_dir && !b.is_dir) return -1;
+            if (!a.is_dir && b.is_dir) return 1;
+            return a.path.localeCompare(b.path);
+        });
+
+        // Limit results
+        var total = items.length;
+        var shown = items.slice(0, 200);
+
+        var html = '<table><thead><tr>' +
+            '<th>Name</th><th>Path</th><th>Size</th><th>Modified</th>' +
+            '</tr></thead><tbody>';
+
+        for (var i = 0; i < shown.length; i++) {
+            var f = shown[i];
+            var icon = f.is_dir ? '&#128193;' : '&#128196;';
+            var href = f.is_dir ? '#browser' + f.path : '#viewer' + f.path;
+
+            // Highlight match in name
+            var displayName = highlightMatch(f.name, query);
+            var displayPath = highlightMatch(f.path, query);
+
+            html += '<tr class="file-row">' +
+                '<td><a class="file-name" href="' + esc(href) + '">' +
+                    '<span class="file-icon">' + icon + '</span>' + displayName + '</a></td>' +
+                '<td class="search-path">' + displayPath + '</td>' +
+                '<td>' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
+                '<td>' + formatDate(f.mod_time) + '</td>' +
+                '</tr>';
+        }
+
+        html += '</tbody></table>';
+        if (total > 200) {
+            html += '<p style="padding:0.75rem 1rem;color:var(--text-muted);font-size:0.85rem">Showing 200 of ' + total + ' results</p>';
+        }
+        table.innerHTML = '<div style="padding:0.5rem 1rem;font-size:0.85rem;color:var(--text-muted);border-bottom:1px solid var(--border)">' +
+            total + ' result' + (total !== 1 ? 's' : '') + ' for "' + esc(query) + '"</div>' + html;
+    }
+
+    function highlightMatch(text, query) {
+        var lower = text.toLowerCase();
+        var q = query.toLowerCase();
+        var idx = lower.indexOf(q);
+        if (idx === -1) return esc(text);
+        return esc(text.substring(0, idx)) +
+            '<mark>' + esc(text.substring(idx, idx + query.length)) + '</mark>' +
+            esc(text.substring(idx + query.length));
+    }
+
+    // Visibility modal
+    function showVisibilityModal(path, currentVis) {
+        var modal = document.getElementById('share-modal');
+        currentVis = currentVis || 'public';
+        modal.innerHTML =
+            '<div class="modal-overlay" id="modal-overlay">' +
+                '<div class="modal">' +
+                    '<button class="modal-close" id="modal-close-btn">&times;</button>' +
+                    '<h3>Visibility: ' + esc(path) + '</h3>' +
+                    '<form id="vis-form" style="padding:1rem 0">' +
+                        '<label class="vis-option">' +
+                            '<input type="radio" name="vis" value="public"' + (currentVis === 'public' ? ' checked' : '') + '>' +
+                            '<span class="vis-badge vis-public">&#127760;</span> Public - visible to anyone with permission' +
+                        '</label>' +
+                        '<label class="vis-option">' +
+                            '<input type="radio" name="vis" value="group"' + (currentVis === 'group' ? ' checked' : '') + '>' +
+                            '<span class="vis-badge vis-group">&#128101;</span> Group - visible to group members only' +
+                        '</label>' +
+                        '<label class="vis-option">' +
+                            '<input type="radio" name="vis" value="private"' + (currentVis === 'private' ? ' checked' : '') + '>' +
+                            '<span class="vis-badge vis-private">&#128274;</span> Private - visible to owner only' +
+                        '</label>' +
+                        '<button type="submit" class="btn" style="margin-top:1rem">Save</button>' +
+                    '</form>' +
+                '</div>' +
+            '</div>';
+
+        document.getElementById('modal-close-btn').addEventListener('click', function() {
+            modal.innerHTML = '';
+        });
+        document.getElementById('modal-overlay').addEventListener('click', function(e) {
+            if (e.target === e.currentTarget) modal.innerHTML = '';
+        });
+
+        document.getElementById('vis-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var selected = modal.querySelector('input[name="vis"]:checked').value;
+            API.put('/api/v1/visibility/' + API.encodeURIPath(path.replace(/^\//, '')), { visibility: selected })
+                .then(function(resp) {
+                    if (resp.ok) {
+                        modal.innerHTML = '';
+                        loadDir(currentPath);
+                    } else {
+                        resp.json().then(function(d) { alert(d.error || 'Failed to set visibility'); });
+                    }
+                });
+        });
+    }
+
+    // Properties modal
+    function showPropertiesModal(path) {
+        var modal = document.getElementById('share-modal');
+        modal.innerHTML =
+            '<div class="modal-overlay" id="modal-overlay">' +
+                '<div class="modal props-modal">' +
+                    '<button class="modal-close" id="modal-close-btn">&times;</button>' +
+                    '<h3>Properties</h3>' +
+                    '<div id="props-content" class="props-loading">Loading...</div>' +
+                '</div>' +
+            '</div>';
+
+        document.getElementById('modal-close-btn').addEventListener('click', function() {
+            modal.innerHTML = '';
+        });
+        document.getElementById('modal-overlay').addEventListener('click', function(e) {
+            if (e.target === e.currentTarget) modal.innerHTML = '';
+        });
+
+        API.get('/api/v1/properties/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(data) {
+            if (data.error) {
+                document.getElementById('props-content').innerHTML =
+                    '<div class="alert alert-error">' + esc(data.error) + '</div>';
+                return;
+            }
+            renderProperties(data, path, modal);
+        }).catch(function() {
+            document.getElementById('props-content').innerHTML =
+                '<div class="alert alert-error">Failed to load properties</div>';
+        });
+    }
+
+    function renderProperties(data, path, modal) {
+        var container = document.getElementById('props-content');
+        if (!container) return;
+
+        var icon = data.is_dir ? '&#128193;' : '&#128196;';
+        var visIcon = data.visibility === 'private' ? '&#128274;' : (data.visibility === 'group' ? '&#128101;' : '&#127760;');
+        var visClass = 'vis-' + (data.visibility || 'public');
+        var visLabel = (data.visibility || 'public').charAt(0).toUpperCase() + (data.visibility || 'public').slice(1);
+
+        var html = '';
+
+        // Header with name and icon
+        html += '<div class="props-header">' +
+            '<span class="props-icon">' + icon + '</span>' +
+            '<div class="props-name">' + esc(data.name) + '</div>' +
+            '</div>';
+
+        // Metadata grid
+        html += '<div class="props-section"><div class="props-label">Details</div><div class="props-grid">';
+        html += '<div class="props-key">Path</div><div class="props-val"><code>' + esc(data.path) + '</code></div>';
+        if (!data.is_dir) {
+            html += '<div class="props-key">Size</div><div class="props-val">' + formatBytes(data.size) + '</div>';
+            html += '<div class="props-key">Hash</div><div class="props-val"><code class="props-hash">' + esc(data.hash || '-') + '</code></div>';
+            html += '<div class="props-key">Version</div><div class="props-val">v' + (data.version || 1);
+            if (data.version_count > 0) {
+                html += ' <span class="props-muted">(' + data.version_count + ' previous)</span>';
+            }
+            html += '</div>';
+        }
+        html += '<div class="props-key">Modified</div><div class="props-val">' + formatDate(data.mod_time) + '</div>';
+        html += '<div class="props-key">Type</div><div class="props-val">' + (data.is_dir ? 'Folder' : 'File') + '</div>';
+        html += '</div></div>';
+
+        // Ownership & Visibility
+        html += '<div class="props-section"><div class="props-label">Ownership &amp; Visibility</div><div class="props-grid">';
+        html += '<div class="props-key">Owner</div><div class="props-val">' + (data.owner_name ? esc(data.owner_name) : '<span class="props-muted">none</span>') + '</div>';
+        html += '<div class="props-key">Group</div><div class="props-val">' + (data.group_name ? esc(data.group_name) : '<span class="props-muted">none</span>') + '</div>';
+        html += '<div class="props-key">Visibility</div><div class="props-val">' +
+            '<span class="vis-badge ' + visClass + '">' + visIcon + '</span> ' + visLabel +
+            ' <button class="btn btn-sm btn-outline props-inline-btn" id="props-change-vis">Change</button></div>';
+        html += '</div></div>';
+
+        // Permissions
+        html += '<div class="props-section"><div class="props-label">Permissions</div>';
+        if (data.permissions && data.permissions.length > 0) {
+            html += '<table class="props-table"><thead><tr><th>User</th><th>Permission</th><th></th></tr></thead><tbody>';
+            for (var i = 0; i < data.permissions.length; i++) {
+                var p = data.permissions[i];
+                html += '<tr><td>' + esc(p.username || 'User #' + p.user_id) + '</td>' +
+                    '<td><span class="badge badge-blue">' + esc(p.permission) + '</span></td>' +
+                    '<td><button class="btn btn-sm btn-danger" data-revoke-perm="' + p.user_id + '">Remove</button></td></tr>';
+            }
+            html += '</tbody></table>';
+        } else {
+            html += '<div class="props-empty">No explicit permissions set</div>';
+        }
+        html += '</div>';
+
+        // Share links
+        if (!data.is_dir) {
+            html += '<div class="props-section"><div class="props-label">Share Links</div>';
+            if (data.share_links && data.share_links.length > 0) {
+                html += '<table class="props-table"><thead><tr><th>Created by</th><th>Downloads</th><th>Expires</th><th></th></tr></thead><tbody>';
+                for (var j = 0; j < data.share_links.length; j++) {
+                    var sl = data.share_links[j];
+                    var dlInfo = sl.download_count + (sl.max_downloads > 0 ? '/' + sl.max_downloads : '');
+                    var expInfo = sl.expires_at ? formatDate(sl.expires_at) : 'Never';
+                    html += '<tr><td>' + esc(sl.created_by) + '</td>' +
+                        '<td>' + dlInfo + '</td>' +
+                        '<td>' + expInfo + '</td>' +
+                        '<td><button class="btn btn-sm btn-danger" data-revoke-link="' + esc(sl.id) + '">Revoke</button></td></tr>';
+                }
+                html += '</tbody></table>';
+            } else {
+                html += '<div class="props-empty">No active share links</div>';
+            }
+            html += '<button class="btn btn-sm" id="props-new-share" style="margin-top:0.5rem">Create Share Link</button>';
+            html += '</div>';
+        }
+
+        // Quick actions
+        html += '<div class="props-actions">';
+        if (!data.is_dir) {
+            html += '<a class="btn btn-sm btn-outline" href="' + esc(API.downloadUrl(path.replace(/^\//, ''))) + '" download>Download</a>';
+            html += '<a class="btn btn-sm btn-outline" href="#versions' + esc(path) + '">Version History</a>';
+        }
+        html += '</div>';
+
+        container.innerHTML = html;
+        container.className = '';
+
+        // Wire change visibility button
+        var changeVisBtn = document.getElementById('props-change-vis');
+        if (changeVisBtn) {
+            changeVisBtn.addEventListener('click', function() {
+                modal.innerHTML = '';
+                showVisibilityModal(path, data.visibility || 'public');
+            });
+        }
+
+        // Wire create share link
+        var newShareBtn = document.getElementById('props-new-share');
+        if (newShareBtn) {
+            newShareBtn.addEventListener('click', function() {
+                modal.innerHTML = '';
+                showShareModal(path);
+            });
+        }
+
+        // Wire revoke share link buttons
+        container.querySelectorAll('[data-revoke-link]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var linkId = btn.getAttribute('data-revoke-link');
+                if (!confirm('Revoke this share link?')) return;
+                API.del('/api/v1/share/' + encodeURIComponent(linkId)).then(function(resp) {
+                    if (resp.ok) {
+                        showPropertiesModal(path);
+                    } else {
+                        resp.json().then(function(d) { alert(d.error || 'Failed to revoke'); });
+                    }
+                });
+            });
+        });
+
+        // Wire revoke permission buttons
+        container.querySelectorAll('[data-revoke-perm]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var uid = btn.getAttribute('data-revoke-perm');
+                if (!confirm('Remove this permission?')) return;
+                API.del('/api/v1/permissions/' + API.encodeURIPath(path.replace(/^\//, '')) + '?user_id=' + uid).then(function(resp) {
+                    if (resp.ok) {
+                        showPropertiesModal(path);
+                    } else {
+                        resp.json().then(function(d) { alert(d.error || 'Failed to remove'); });
+                    }
+                });
+            });
+        });
+    }
 
     // Load directory contents
     function loadDir(path) {

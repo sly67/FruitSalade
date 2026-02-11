@@ -47,8 +47,10 @@ type Server struct {
 	broadcaster *events.Broadcaster
 
 	// Sharing
-	permissions *sharing.PermissionStore
-	shareLinks  *sharing.ShareLinkStore
+	permissions  *sharing.PermissionStore
+	shareLinks   *sharing.ShareLinkStore
+	groups       *sharing.GroupStore
+	provisioner  *sharing.Provisioner
 
 	// Quotas
 	quotaStore  *quota.QuotaStore
@@ -65,7 +67,9 @@ func NewServer(
 	shareLinks *sharing.ShareLinkStore,
 	quotaStore *quota.QuotaStore,
 	rateLimiter *quota.RateLimiter,
+	groups *sharing.GroupStore,
 	cfg *config.Config,
+	provisioner *sharing.Provisioner,
 ) *Server {
 	return &Server{
 		storage:       storage,
@@ -74,6 +78,8 @@ func NewServer(
 		broadcaster:   broadcaster,
 		permissions:   permissions,
 		shareLinks:    shareLinks,
+		groups:        groups,
+		provisioner:   provisioner,
 		quotaStore:    quotaStore,
 		rateLimiter:   rateLimiter,
 		config:        cfg,
@@ -184,10 +190,33 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /api/v1/admin/users", s.handleCreateUser)
 	protected.HandleFunc("DELETE /api/v1/admin/users/{userID}", s.handleDeleteUser)
 	protected.HandleFunc("PUT /api/v1/admin/users/{userID}/password", s.handleChangePassword)
+	protected.HandleFunc("GET /api/v1/admin/users/{userID}/groups", s.handleUserGroups)
 	protected.HandleFunc("GET /api/v1/admin/sharelinks", s.handleListShareLinks)
 	protected.HandleFunc("GET /api/v1/admin/stats", s.handleDashboardStats)
 	protected.HandleFunc("GET /api/v1/admin/config", s.handleGetConfig)
 	protected.HandleFunc("PUT /api/v1/admin/config", s.handleUpdateConfig)
+
+	// Admin group endpoints
+	protected.HandleFunc("GET /api/v1/admin/groups", s.handleListGroups)
+	protected.HandleFunc("POST /api/v1/admin/groups", s.handleCreateGroup)
+	protected.HandleFunc("GET /api/v1/admin/groups/tree", s.handleGroupTree)
+	protected.HandleFunc("GET /api/v1/admin/groups/{groupID}", s.handleGetGroup)
+	protected.HandleFunc("DELETE /api/v1/admin/groups/{groupID}", s.handleDeleteGroup)
+	protected.HandleFunc("PUT /api/v1/admin/groups/{groupID}/parent", s.handleMoveGroup)
+	protected.HandleFunc("GET /api/v1/admin/groups/{groupID}/members", s.handleListGroupMembers)
+	protected.HandleFunc("POST /api/v1/admin/groups/{groupID}/members", s.handleAddGroupMember)
+	protected.HandleFunc("PUT /api/v1/admin/groups/{groupID}/members/{userID}/role", s.handleUpdateMemberRole)
+	protected.HandleFunc("DELETE /api/v1/admin/groups/{groupID}/members/{userID}", s.handleRemoveGroupMember)
+	protected.HandleFunc("GET /api/v1/admin/groups/{groupID}/permissions", s.handleListGroupPermissions)
+	protected.HandleFunc("PUT /api/v1/admin/groups/{groupID}/permissions/{path...}", s.handleSetGroupPermission)
+	protected.HandleFunc("DELETE /api/v1/admin/groups/{groupID}/permissions/{path...}", s.handleDeleteGroupPermission)
+
+	// File properties endpoint
+	protected.HandleFunc("GET /api/v1/properties/{path...}", s.handleFileProperties)
+
+	// Visibility endpoints
+	protected.HandleFunc("GET /api/v1/visibility/{path...}", s.handleGetVisibility)
+	protected.HandleFunc("PUT /api/v1/visibility/{path...}", s.handleSetVisibility)
 
 	// Token management endpoints (user-facing)
 	protected.HandleFunc("DELETE /api/v1/auth/token", s.handleRevokeCurrentToken)
@@ -343,7 +372,7 @@ func (s *Server) handleSubtree(w http.ResponseWriter, r *http.Request) {
 }
 
 // filterTree returns a copy of the tree with only nodes the user can read.
-// Admins see everything.
+// Admins see everything. Uses pre-loaded maps for performance.
 func (s *Server) filterTree(ctx context.Context, node *models.FileNode, claims *auth.Claims) *models.FileNode {
 	if node == nil || claims == nil {
 		return node
@@ -352,36 +381,99 @@ func (s *Server) filterTree(ctx context.Context, node *models.FileNode, claims *
 		return node
 	}
 
-	// Check if user can access this node
-	if !node.IsDir && !s.permissions.CheckAccess(ctx, claims.UserID, node.Path, "read", false) {
+	// Pre-load maps once for the entire tree walk
+	userGroups, _ := s.groups.GetUserGroupsMap(ctx, claims.UserID)
+	if userGroups == nil {
+		userGroups = make(map[int]string)
+	}
+	userPerms, _ := s.permissions.GetUserPermissionsMap(ctx, claims.UserID)
+	if userPerms == nil {
+		userPerms = make(map[string]string)
+	}
+
+	return s.filterNodeRecursive(ctx, node, claims, userGroups, userPerms)
+}
+
+// filterNodeRecursive filters a single node using pre-loaded permission/group maps.
+func (s *Server) filterNodeRecursive(ctx context.Context, node *models.FileNode, claims *auth.Claims, userGroups map[int]string, userPerms map[string]string) *models.FileNode {
+	if node == nil {
+		return nil
+	}
+
+	// 1. Visibility gate
+	if !s.permissions.CheckVisibility(node, claims.UserID, false, userGroups) {
+		return nil
+	}
+
+	// 2. Permission gate for files
+	if !node.IsDir && !s.checkAccessFast(node, claims, userGroups, userPerms) {
 		return nil
 	}
 
 	if !node.IsDir {
-		return node
+		return copyNode(node)
 	}
 
-	// For directories, filter children
-	filtered := &models.FileNode{
-		ID:      node.ID,
-		Name:    node.Name,
-		Path:    node.Path,
-		Size:    node.Size,
-		ModTime: node.ModTime,
-		IsDir:   node.IsDir,
-		Hash:    node.Hash,
-		Version: node.Version,
-		OwnerID: node.OwnerID,
-	}
+	// 3. For directories, filter children recursively
+	filtered := copyNode(node)
+	filtered.Children = nil
 
 	for _, child := range node.Children {
-		fc := s.filterTree(ctx, child, claims)
+		fc := s.filterNodeRecursive(ctx, child, claims, userGroups, userPerms)
 		if fc != nil {
 			filtered.Children = append(filtered.Children, fc)
 		}
 	}
 
 	return filtered
+}
+
+// checkAccessFast checks access using pre-loaded maps (no DB queries in the hot path).
+func (s *Server) checkAccessFast(node *models.FileNode, claims *auth.Claims, userGroups map[int]string, userPerms map[string]string) bool {
+	// Owner always has access
+	if node.OwnerID > 0 && node.OwnerID == claims.UserID {
+		return true
+	}
+
+	// Check user file_permissions with path inheritance
+	segments := sharing.PathSegments(node.Path)
+	for _, seg := range segments {
+		if perm, ok := userPerms[seg]; ok {
+			if sharing.PermissionSatisfies(perm, "read") {
+				return true
+			}
+		}
+	}
+
+	// Check group role-based access for files with group_id
+	if node.GroupID > 0 {
+		if role, ok := userGroups[node.GroupID]; ok {
+			mappedPerm := sharing.RoleToPermission(role)
+			if sharing.PermissionSatisfies(mappedPerm, "read") {
+				return true
+			}
+		}
+	}
+
+	// Fall back to DB-based CheckAccess for group_permissions path inheritance
+	return s.permissions.CheckAccess(context.Background(), claims.UserID, node.Path, "read", false)
+}
+
+// copyNode creates a shallow copy of a FileNode (without children).
+func copyNode(node *models.FileNode) *models.FileNode {
+	return &models.FileNode{
+		ID:         node.ID,
+		Name:       node.Name,
+		Path:       node.Path,
+		Size:       node.Size,
+		ModTime:    node.ModTime,
+		IsDir:      node.IsDir,
+		Hash:       node.Hash,
+		Version:    node.Version,
+		OwnerID:    node.OwnerID,
+		Visibility: node.Visibility,
+		GroupID:    node.GroupID,
+	}
 }
 
 func (s *Server) findNode(root *models.FileNode, path string) *models.FileNode {
@@ -1359,6 +1451,105 @@ func (s *Server) handleGetUsage(w http.ResponseWriter, r *http.Request) {
 			MaxUploadSizeBytes: q.MaxUploadSizeBytes,
 		},
 	})
+}
+
+// ─── File Properties ────────────────────────────────────────────────────────
+
+func (s *Server) handleFileProperties(w http.ResponseWriter, r *http.Request) {
+	path := "/" + r.PathValue("path")
+	if path == "/" {
+		s.sendError(w, http.StatusBadRequest, "path required")
+		return
+	}
+
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Check read permission
+	if !s.permissions.CheckAccess(r.Context(), claims.UserID, path, "read", claims.IsAdmin) {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	// Get file metadata
+	node := s.findNode(s.tree, path)
+	if node == nil {
+		s.sendError(w, http.StatusNotFound, "path not found: "+path)
+		return
+	}
+
+	resp := protocol.FilePropertiesResponse{
+		ID:         node.ID,
+		Name:       node.Name,
+		Path:       node.Path,
+		Size:       node.Size,
+		ModTime:    node.ModTime,
+		IsDir:      node.IsDir,
+		Hash:       node.Hash,
+		Version:    node.Version,
+		OwnerID:    node.OwnerID,
+		GroupID:    node.GroupID,
+		Visibility: node.Visibility,
+	}
+	if resp.Visibility == "" {
+		resp.Visibility = "public"
+	}
+
+	// Resolve owner name
+	if node.OwnerID > 0 {
+		if name, err := s.groups.GetUsernameByID(r.Context(), node.OwnerID); err == nil {
+			resp.OwnerName = name
+		}
+	}
+
+	// Resolve group name
+	if node.GroupID > 0 {
+		if name, err := s.groups.GetGroupNameByID(r.Context(), node.GroupID); err == nil {
+			resp.GroupName = name
+		}
+	}
+
+	// Get permissions (only if owner or admin)
+	isOwner := node.OwnerID > 0 && node.OwnerID == claims.UserID
+	if claims.IsAdmin || isOwner {
+		if perms, err := s.permissions.ListPermissions(r.Context(), path); err == nil {
+			for _, p := range perms {
+				resp.Permissions = append(resp.Permissions, protocol.PermissionResponse{
+					UserID:     p.UserID,
+					Username:   p.Username,
+					Path:       p.Path,
+					Permission: p.Permission,
+				})
+			}
+		}
+
+		// Get share links
+		if links, err := s.shareLinks.ListByPath(r.Context(), path); err == nil {
+			for _, l := range links {
+				resp.ShareLinks = append(resp.ShareLinks, protocol.ShareLinkInfo{
+					ID:            l.ID,
+					CreatedBy:     l.CreatedByUser,
+					ExpiresAt:     l.ExpiresAt,
+					MaxDownloads:  l.MaxDownloads,
+					DownloadCount: l.DownloadCount,
+					CreatedAt:     l.CreatedAt,
+				})
+			}
+		}
+	}
+
+	// Get version count
+	if !node.IsDir {
+		if versions, _, err := s.storage.Metadata().ListVersions(r.Context(), path); err == nil {
+			resp.VersionCount = len(versions)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

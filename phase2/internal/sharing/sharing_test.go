@@ -16,14 +16,14 @@ func TestPathSegments(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := pathSegments(tt.path)
+		result := PathSegments(tt.path)
 		if len(result) != len(tt.expected) {
-			t.Errorf("pathSegments(%s): got %d segments, want %d: %v", tt.path, len(result), len(tt.expected), result)
+			t.Errorf("PathSegments(%s): got %d segments, want %d: %v", tt.path, len(result), len(tt.expected), result)
 			continue
 		}
 		for i, seg := range result {
 			if seg != tt.expected[i] {
-				t.Errorf("pathSegments(%s)[%d]: got %s, want %s", tt.path, i, seg, tt.expected[i])
+				t.Errorf("PathSegments(%s)[%d]: got %s, want %s", tt.path, i, seg, tt.expected[i])
 			}
 		}
 	}
@@ -47,9 +47,9 @@ func TestPermissionSatisfies(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := permissionSatisfies(tt.has, tt.required)
+		result := PermissionSatisfies(tt.has, tt.required)
 		if result != tt.expect {
-			t.Errorf("permissionSatisfies(%s, %s) = %v, want %v", tt.has, tt.required, result, tt.expect)
+			t.Errorf("PermissionSatisfies(%s, %s) = %v, want %v", tt.has, tt.required, result, tt.expect)
 		}
 	}
 }
