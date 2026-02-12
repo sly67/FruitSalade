@@ -11,9 +11,7 @@ function renderGroups() {
             '<button class="btn" id="btn-show-create-group">Create Group</button>' +
         '</div>' +
         '<div id="group-form-area"></div>' +
-        '<div id="group-alert"></div>' +
-        '<div id="groups-table">Loading...</div>' +
-        '<div id="group-detail-modal"></div>';
+        '<div id="groups-table">Loading...</div>';
 
     document.getElementById('btn-show-create-group').addEventListener('click', showGroupCreateForm);
     document.getElementById('btn-view-flat').addEventListener('click', function() {
@@ -42,12 +40,7 @@ function loadGroupTree() {
         document.getElementById('groups-table').innerHTML = html;
         wireGroupTreeActions();
     }).catch(function() {
-        // Show warning and fall back to flat list
-        var alert = document.getElementById('group-alert');
-        if (alert) {
-            alert.innerHTML = '<div class="alert alert-warning">Tree view unavailable, showing flat list</div>';
-            setTimeout(function() { if (alert) alert.innerHTML = ''; }, 4000);
-        }
+        Toast.info('Tree view unavailable, showing flat list');
         loadGroupList();
     });
 }
@@ -185,14 +178,14 @@ function showGroupCreateForm() {
                     return resp.json().then(function(data) {
                         if (resp.ok) {
                             area.innerHTML = '';
-                            showGroupAlert('Group "' + name + '" created', 'success');
+                            Toast.show('Group "' + name + '" created', 'success');
                             loadGroupTree();
                         } else {
-                            showGroupAlert(data.error || 'Failed to create group', 'error');
+                            Toast.show(data.error || 'Failed to create group', 'error');
                         }
                     });
                 }).catch(function() {
-                    showGroupAlert('Failed to create group', 'error');
+                    Toast.show('Failed to create group', 'error');
                 });
         });
     });
@@ -204,53 +197,39 @@ function deleteGroup(id, name) {
     API.del('/api/v1/admin/groups/' + id).then(function(resp) {
         return resp.json().then(function(data) {
             if (resp.ok) {
-                showGroupAlert('Group deleted', 'success');
+                Toast.show('Group deleted', 'success');
                 loadGroupTree();
             } else {
-                showGroupAlert(data.error || 'Failed to delete group', 'error');
+                Toast.show(data.error || 'Failed to delete group', 'error');
             }
         });
     }).catch(function() {
-        showGroupAlert('Failed to delete group', 'error');
+        Toast.show('Failed to delete group', 'error');
     });
-}
-
-function showGroupAlert(message, type) {
-    var el = document.getElementById('group-alert');
-    if (!el) return;
-    el.innerHTML = '<div class="alert alert-' + type + '">' + esc(message) + '</div>';
-    setTimeout(function() { if (el) el.innerHTML = ''; }, 4000);
 }
 
 // ─── Group Detail Modal ─────────────────────────────────────────────────────
 
 function showGroupDetail(groupID, groupName) {
-    var modal = document.getElementById('group-detail-modal');
-    modal.innerHTML =
-        '<div class="modal-overlay" id="group-modal-overlay">' +
-            '<div class="modal group-detail-modal">' +
-                '<button class="modal-close" id="group-modal-close">&times;</button>' +
-                '<h3>Group: ' + esc(groupName) + '</h3>' +
-                '<div class="group-tabs">' +
-                    '<button class="btn btn-sm group-tab active" data-tab="members">Members</button>' +
-                    '<button class="btn btn-sm btn-outline group-tab" data-tab="permissions">Permissions</button>' +
-                    '<button class="btn btn-sm btn-outline group-tab" data-tab="subgroups">Subgroups</button>' +
-                '</div>' +
-                '<div id="group-tab-content"></div>' +
-            '</div>' +
-        '</div>';
+    var contentDiv = document.createElement('div');
+    contentDiv.innerHTML =
+        '<div class="group-tabs">' +
+            '<button class="btn btn-sm group-tab active" data-tab="members">Members</button>' +
+            '<button class="btn btn-sm btn-outline group-tab" data-tab="permissions">Permissions</button>' +
+            '<button class="btn btn-sm btn-outline group-tab" data-tab="subgroups">Subgroups</button>' +
+        '</div>' +
+        '<div id="group-tab-content"></div>';
 
-    document.getElementById('group-modal-close').addEventListener('click', function() {
-        modal.innerHTML = '';
-    });
-    document.getElementById('group-modal-overlay').addEventListener('click', function(e) {
-        if (e.target === e.currentTarget) modal.innerHTML = '';
+    var modalEl = Modal.open({
+        title: 'Group: ' + groupName,
+        content: contentDiv,
+        className: 'group-detail-modal'
     });
 
     // Tab switching
-    modal.querySelectorAll('.group-tab').forEach(function(tab) {
+    modalEl.querySelectorAll('.group-tab').forEach(function(tab) {
         tab.addEventListener('click', function() {
-            modal.querySelectorAll('.group-tab').forEach(function(t) {
+            modalEl.querySelectorAll('.group-tab').forEach(function(t) {
                 t.classList.remove('active');
                 t.classList.add('btn-outline');
             });

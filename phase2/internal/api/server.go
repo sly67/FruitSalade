@@ -179,6 +179,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("DELETE /api/v1/permissions/{path...}", s.handleDeletePermission)
 
 	// Share link management endpoints
+	protected.HandleFunc("GET /api/v1/shares", s.handleListUserShares)
 	protected.HandleFunc("POST /api/v1/share/{path...}", s.handleCreateShareLink)
 	protected.HandleFunc("DELETE /api/v1/share/{id}", s.handleRevokeShareLink)
 
@@ -1214,6 +1215,24 @@ func (s *Server) handleDeletePermission(w http.ResponseWriter, r *http.Request) 
 }
 
 // ─── Share Links ────────────────────────────────────────────────────────────
+
+func (s *Server) handleListUserShares(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	links, err := s.shareLinks.ListByUser(r.Context(), claims.UserID)
+	if err != nil {
+		logging.Error("list user shares", zap.Error(err))
+		s.sendError(w, http.StatusInternalServerError, "failed to list share links")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(links)
+}
 
 func (s *Server) handleCreateShareLink(w http.ResponseWriter, r *http.Request) {
 	path := "/" + r.PathValue("path")

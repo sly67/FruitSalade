@@ -18,6 +18,7 @@ import (
 	"github.com/fruitsalade/fruitsalade/shared/pkg/client"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/logger"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
+	"github.com/fruitsalade/fruitsalade/shared/pkg/tree"
 )
 
 // CoreConfig holds configuration for the ClientCore.
@@ -121,17 +122,17 @@ func (c *ClientCore) Metadata() *models.FileNode {
 func (c *ClientCore) FetchMetadata(ctx context.Context) error {
 	logger.Info("Fetching metadata from %s", c.Config.ServerURL)
 
-	tree, err := c.Client.FetchMetadata(ctx)
+	root, err := c.Client.FetchMetadata(ctx)
 	if err != nil {
 		return fmt.Errorf("fetch metadata: %w", err)
 	}
 
 	c.mu.Lock()
-	c.metadata = tree
+	c.metadata = root
 	c.mu.Unlock()
 
 	c.Stats.MetadataFetches.Add(1)
-	logger.Info("Metadata loaded: %d items", countNodes(tree))
+	logger.Info("Metadata loaded: %d items", tree.CountNodes(root))
 	return nil
 }
 
@@ -139,7 +140,7 @@ func (c *ClientCore) FetchMetadata(ctx context.Context) error {
 func (c *ClientCore) RefreshMetadata(ctx context.Context) (*MetadataDiff, error) {
 	logger.Debug("Refreshing metadata...")
 
-	tree, err := c.Client.FetchMetadata(ctx)
+	root, err := c.Client.FetchMetadata(ctx)
 	if err != nil {
 		logger.Error("Metadata refresh failed: %v", err)
 		return nil, err
@@ -147,15 +148,15 @@ func (c *ClientCore) RefreshMetadata(ctx context.Context) (*MetadataDiff, error)
 
 	c.mu.Lock()
 	oldTree := c.metadata
-	c.metadata = tree
+	c.metadata = root
 	c.mu.Unlock()
 
 	c.Stats.MetadataFetches.Add(1)
 
-	diff := DiffMetadata(oldTree, tree)
+	diff := DiffMetadata(oldTree, root)
 
-	oldCount := countNodes(oldTree)
-	newCount := countNodes(tree)
+	oldCount := tree.CountNodes(oldTree)
+	newCount := tree.CountNodes(root)
 	if oldCount != newCount {
 		logger.Info("Metadata refreshed: %d -> %d items (+%d/-%d/~%d)",
 			oldCount, newCount, len(diff.Added), len(diff.Removed), len(diff.Changed))
@@ -170,20 +171,20 @@ func (c *ClientCore) RefreshMetadata(ctx context.Context) (*MetadataDiff, error)
 func (c *ClientCore) FindByPath(path string) *models.FileNode {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return findByPath(c.metadata, path)
+	return tree.FindByPath(c.metadata, path)
 }
 
 // FindByID finds a node by its ID.
 func (c *ClientCore) FindByID(id string) *models.FileNode {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return findByID(c.metadata, id)
+	return tree.FindByID(c.metadata, id)
 }
 
 // FetchContent fetches a file's content, using cache if available.
 // Returns the local cache path.
 func (c *ClientCore) FetchContent(ctx context.Context, node *models.FileNode) (string, error) {
-	fileID := cacheID(node.ID)
+	fileID := tree.CacheID(node.ID)
 
 	if cachePath, ok := c.Cache.Get(fileID); ok {
 		logger.Debug("Cache hit: %s", node.Path)
@@ -320,7 +321,7 @@ func (c *ClientCore) CacheStats() (used, max int64, count int) {
 func (c *ClientCore) AddMetadataChild(parentPath string, child *models.FileNode) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if parent := findByPath(c.metadata, parentPath); parent != nil {
+	if parent := tree.FindByPath(c.metadata, parentPath); parent != nil {
 		parent.Children = append(parent.Children, child)
 	}
 }
@@ -329,8 +330,8 @@ func (c *ClientCore) AddMetadataChild(parentPath string, child *models.FileNode)
 func (c *ClientCore) RemoveMetadataChild(parentPath, childName string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if parent := findByPath(c.metadata, parentPath); parent != nil {
-		removeChildFromNode(parent, childName)
+	if parent := tree.FindByPath(c.metadata, parentPath); parent != nil {
+		tree.RemoveChild(parent, childName)
 	}
 }
 
@@ -338,7 +339,7 @@ func (c *ClientCore) RemoveMetadataChild(parentPath, childName string) {
 func (c *ClientCore) UpdateMetadataNode(path string, size int64, hash string, modTime time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if node := findByPath(c.metadata, path); node != nil {
+	if node := tree.FindByPath(c.metadata, path); node != nil {
 		node.Size = size
 		node.Hash = hash
 		node.ModTime = modTime
@@ -476,8 +477,8 @@ func (c *ClientCore) stopHealthCheck() {
 func DiffMetadata(oldTree, newTree *models.FileNode) *MetadataDiff {
 	diff := &MetadataDiff{}
 
-	oldMap := flattenTree(oldTree)
-	newMap := flattenTree(newTree)
+	oldMap := tree.Flatten(oldTree)
+	newMap := tree.Flatten(newTree)
 
 	for path, newNode := range newMap {
 		oldNode, exists := oldMap[path]
@@ -497,88 +498,9 @@ func DiffMetadata(oldTree, newTree *models.FileNode) *MetadataDiff {
 	return diff
 }
 
-func flattenTree(root *models.FileNode) map[string]*models.FileNode {
-	result := make(map[string]*models.FileNode)
-	if root == nil {
-		return result
-	}
-	flattenTreeRecursive(root, result)
-	return result
-}
-
-func flattenTreeRecursive(node *models.FileNode, result map[string]*models.FileNode) {
-	result[node.Path] = node
-	for _, child := range node.Children {
-		flattenTreeRecursive(child, result)
-	}
-}
-
 func nodeChanged(old, new *models.FileNode) bool {
 	return old.Size != new.Size ||
 		old.Hash != new.Hash ||
 		!old.ModTime.Equal(new.ModTime) ||
 		old.IsDir != new.IsDir
-}
-
-func countNodes(node *models.FileNode) int {
-	if node == nil {
-		return 0
-	}
-	count := 1
-	for _, child := range node.Children {
-		count += countNodes(child)
-	}
-	return count
-}
-
-func findByPath(root *models.FileNode, path string) *models.FileNode {
-	if root == nil {
-		return nil
-	}
-	if root.Path == path {
-		return root
-	}
-	for _, child := range root.Children {
-		if found := findByPath(child, path); found != nil {
-			return found
-		}
-	}
-	return nil
-}
-
-func findByID(root *models.FileNode, id string) *models.FileNode {
-	if root == nil {
-		return nil
-	}
-	if root.ID == id {
-		return root
-	}
-	for _, child := range root.Children {
-		if found := findByID(child, id); found != nil {
-			return found
-		}
-	}
-	return nil
-}
-
-func removeChildFromNode(parent *models.FileNode, name string) {
-	for i, child := range parent.Children {
-		if child.Name == name {
-			parent.Children = append(parent.Children[:i], parent.Children[i+1:]...)
-			return
-		}
-	}
-}
-
-// cacheID converts a file ID to a cache-safe key.
-func cacheID(id string) string {
-	return strings.ReplaceAll(id, "/", "_")
-}
-
-// BuildChildPath constructs a child path from parent + name.
-func BuildChildPath(parentPath, name string) string {
-	if parentPath == "/" {
-		return "/" + name
-	}
-	return parentPath + "/" + name
 }

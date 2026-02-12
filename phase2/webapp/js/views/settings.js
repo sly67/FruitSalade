@@ -3,7 +3,6 @@ function renderSettings() {
     var app = document.getElementById('app');
     app.innerHTML =
         '<div class="toolbar"><h2>Server Settings</h2></div>' +
-        '<div id="settings-alert"></div>' +
         '<div id="settings-content">Loading...</div>';
 
     API.get('/api/v1/admin/config').then(function(data) {
@@ -96,13 +95,13 @@ function renderConfigSections(data) {
         API.put('/api/v1/admin/config', updates).then(function(resp) {
             return resp.json().then(function(data) {
                 if (resp.ok) {
-                    showSettingsAlert('Settings saved successfully', 'success');
+                    Toast.success('Settings saved successfully');
                 } else {
-                    showSettingsAlert(data.error || 'Failed to save settings', 'error');
+                    Toast.error(data.error || 'Failed to save settings');
                 }
             });
         }).catch(function() {
-            showSettingsAlert('Failed to save settings', 'error');
+            Toast.error('Failed to save settings');
         });
     });
 }
@@ -126,9 +125,3 @@ function logLevelOption(level, current) {
         level.charAt(0).toUpperCase() + level.slice(1) + '</option>';
 }
 
-function showSettingsAlert(message, type) {
-    var el = document.getElementById('settings-alert');
-    if (!el) return;
-    el.innerHTML = '<div class="alert alert-' + type + '">' + esc(message) + '</div>';
-    setTimeout(function() { if (el) el.innerHTML = ''; }, 4000);
-}

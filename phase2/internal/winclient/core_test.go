@@ -5,105 +5,8 @@ import (
 	"time"
 
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
+	"github.com/fruitsalade/fruitsalade/shared/pkg/tree"
 )
-
-func TestCountNodes(t *testing.T) {
-	root := &models.FileNode{
-		Path: "/", IsDir: true,
-		Children: []*models.FileNode{
-			{Path: "/a.txt", Name: "a.txt"},
-			{Path: "/dir", Name: "dir", IsDir: true, Children: []*models.FileNode{
-				{Path: "/dir/b.txt", Name: "b.txt"},
-			}},
-		},
-	}
-	if got := countNodes(root); got != 4 {
-		t.Errorf("countNodes = %d, want 4", got)
-	}
-	if got := countNodes(nil); got != 0 {
-		t.Errorf("countNodes(nil) = %d, want 0", got)
-	}
-}
-
-func TestFindByPath(t *testing.T) {
-	root := &models.FileNode{
-		Path: "/", IsDir: true,
-		Children: []*models.FileNode{
-			{Path: "/a.txt", Name: "a.txt"},
-			{Path: "/dir", Name: "dir", IsDir: true, Children: []*models.FileNode{
-				{Path: "/dir/b.txt", Name: "b.txt"},
-			}},
-		},
-	}
-
-	tests := []struct {
-		path  string
-		found bool
-	}{
-		{"/", true},
-		{"/a.txt", true},
-		{"/dir", true},
-		{"/dir/b.txt", true},
-		{"/nonexistent", false},
-	}
-
-	for _, tt := range tests {
-		node := findByPath(root, tt.path)
-		if (node != nil) != tt.found {
-			t.Errorf("findByPath(%q) found=%v, want %v", tt.path, node != nil, tt.found)
-		}
-		if node != nil && node.Path != tt.path {
-			t.Errorf("findByPath(%q).Path = %q", tt.path, node.Path)
-		}
-	}
-}
-
-func TestFindByID(t *testing.T) {
-	root := &models.FileNode{
-		ID: "root", Path: "/", IsDir: true,
-		Children: []*models.FileNode{
-			{ID: "id-a", Path: "/a.txt", Name: "a.txt"},
-		},
-	}
-
-	if node := findByID(root, "id-a"); node == nil || node.Path != "/a.txt" {
-		t.Errorf("findByID(id-a) failed")
-	}
-	if node := findByID(root, "nonexistent"); node != nil {
-		t.Errorf("findByID(nonexistent) should return nil")
-	}
-}
-
-func TestBuildChildPath(t *testing.T) {
-	tests := []struct {
-		parent, name, want string
-	}{
-		{"/", "file.txt", "/file.txt"},
-		{"/dir", "file.txt", "/dir/file.txt"},
-		{"/a/b", "c", "/a/b/c"},
-	}
-	for _, tt := range tests {
-		got := BuildChildPath(tt.parent, tt.name)
-		if got != tt.want {
-			t.Errorf("BuildChildPath(%q, %q) = %q, want %q", tt.parent, tt.name, got, tt.want)
-		}
-	}
-}
-
-func TestCacheID(t *testing.T) {
-	tests := []struct {
-		id, want string
-	}{
-		{"/path/to/file.txt", "_path_to_file.txt"},
-		{"plain", "plain"},
-	}
-	for _, tt := range tests {
-		got := cacheID(tt.id)
-		if got != tt.want {
-			t.Errorf("cacheID(%q) = %q, want %q", tt.id, got, tt.want)
-		}
-	}
-}
 
 func TestDiffMetadata(t *testing.T) {
 	now := time.Now()
@@ -159,28 +62,19 @@ func TestDiffMetadataNilTrees(t *testing.T) {
 	}
 }
 
-func TestRemoveChildFromNode(t *testing.T) {
-	parent := &models.FileNode{
-		Path: "/", IsDir: true,
-		Children: []*models.FileNode{
-			{Name: "a", Path: "/a"},
-			{Name: "b", Path: "/b"},
-			{Name: "c", Path: "/c"},
-		},
+func TestBuildChildPath(t *testing.T) {
+	tests := []struct {
+		parent, name, want string
+	}{
+		{"/", "file.txt", "/file.txt"},
+		{"/dir", "file.txt", "/dir/file.txt"},
+		{"/a/b", "c", "/a/b/c"},
 	}
-
-	removeChildFromNode(parent, "b")
-	if len(parent.Children) != 2 {
-		t.Errorf("got %d children, want 2", len(parent.Children))
-	}
-	if parent.Children[0].Name != "a" || parent.Children[1].Name != "c" {
-		t.Errorf("unexpected children: %v", namesOf(parent.Children))
-	}
-
-	// Remove nonexistent: should be no-op
-	removeChildFromNode(parent, "z")
-	if len(parent.Children) != 2 {
-		t.Errorf("remove nonexistent changed count: %d", len(parent.Children))
+	for _, tt := range tests {
+		got := tree.BuildChildPath(tt.parent, tt.name)
+		if got != tt.want {
+			t.Errorf("BuildChildPath(%q, %q) = %q, want %q", tt.parent, tt.name, got, tt.want)
+		}
 	}
 }
 
@@ -289,12 +183,4 @@ func pathsOf(nodes []*models.FileNode) []string {
 		paths = append(paths, n.Path)
 	}
 	return paths
-}
-
-func namesOf(nodes []*models.FileNode) []string {
-	var names []string
-	for _, n := range nodes {
-		names = append(names, n.Name)
-	}
-	return names
 }

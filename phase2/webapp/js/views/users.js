@@ -7,7 +7,6 @@ function renderUsers() {
             '<button class="btn" id="btn-show-create">Create User</button>' +
         '</div>' +
         '<div id="user-form-area"></div>' +
-        '<div id="user-alert"></div>' +
         '<div id="users-table">Loading...</div>';
 
     document.getElementById('btn-show-create').addEventListener('click', showUserCreateForm);
@@ -104,28 +103,20 @@ function loadUserGroupBadges(userID) {
 }
 
 function showUserGroupsModal(userID, username, allGroups) {
-    var modalArea = document.getElementById('user-form-area');
-    modalArea.innerHTML =
-        '<div class="modal-overlay" id="user-groups-overlay">' +
-            '<div class="modal" style="max-width:550px">' +
-                '<button class="modal-close" id="user-groups-close">&times;</button>' +
-                '<h3>Groups for ' + esc(username) + '</h3>' +
-                '<div id="user-groups-list">Loading...</div>' +
-                '<div id="user-groups-add" style="margin-top:1rem"></div>' +
-            '</div>' +
-        '</div>';
+    var contentDiv = document.createElement('div');
+    contentDiv.innerHTML = '<div id="user-groups-list">Loading...</div>' +
+        '<div id="user-groups-add" style="margin-top:1rem"></div>';
 
-    document.getElementById('user-groups-close').addEventListener('click', function() {
-        modalArea.innerHTML = '';
-    });
-    document.getElementById('user-groups-overlay').addEventListener('click', function(e) {
-        if (e.target === e.currentTarget) modalArea.innerHTML = '';
+    Modal.open({
+        title: 'Groups for ' + username,
+        content: contentDiv,
+        className: 'user-groups-modal'
     });
 
-    loadUserGroupsList(userID, username, allGroups, modalArea);
+    loadUserGroupsList(userID, username, allGroups);
 }
 
-function loadUserGroupsList(userID, username, allGroups, modalArea) {
+function loadUserGroupsList(userID, username, allGroups) {
     API.get('/api/v1/admin/users/' + userID + '/groups').then(function(memberships) {
         var listEl = document.getElementById('user-groups-list');
         var addEl = document.getElementById('user-groups-add');
@@ -177,7 +168,7 @@ function loadUserGroupsList(userID, username, allGroups, modalArea) {
                     if (!confirm('Remove ' + username + ' from this group?')) return;
                     API.del('/api/v1/admin/groups/' + gid + '/members/' + userID).then(function(resp) {
                         if (resp.ok) {
-                            loadUserGroupsList(userID, username, allGroups, modalArea);
+                            loadUserGroupsList(userID, username, allGroups);
                             loadUserGroupBadges(userID);
                         } else {
                             resp.json().then(function(d) { alert(d.error || 'Failed to remove'); });
@@ -219,7 +210,7 @@ function loadUserGroupsList(userID, username, allGroups, modalArea) {
                 API.post('/api/v1/admin/groups/' + gid + '/members', { user_id: userID, role: role })
                     .then(function(resp) {
                         if (resp.ok) {
-                            loadUserGroupsList(userID, username, allGroups, modalArea);
+                            loadUserGroupsList(userID, username, allGroups);
                             loadUserGroupBadges(userID);
                         } else {
                             resp.json().then(function(d) { alert(d.error || 'Failed to add'); });
@@ -275,14 +266,14 @@ function showUserCreateForm() {
             return resp.json().then(function(data) {
                 if (resp.ok) {
                     area.innerHTML = '';
-                    showUserAlert('User created successfully', 'success');
+                    Toast.success('User created successfully');
                     loadUserList();
                 } else {
-                    showUserAlert(data.error || 'Failed to create user', 'error');
+                    Toast.error(data.error || 'Failed to create user');
                 }
             });
         }).catch(function() {
-            showUserAlert('Failed to create user', 'error');
+            Toast.error('Failed to create user');
         });
     });
 }
@@ -293,14 +284,14 @@ function deleteUserById(id, username) {
     API.del('/api/v1/admin/users/' + id).then(function(resp) {
         return resp.json().then(function(data) {
             if (resp.ok) {
-                showUserAlert('User deleted', 'success');
+                Toast.success('User deleted');
                 loadUserList();
             } else {
-                showUserAlert(data.error || 'Failed to delete user', 'error');
+                Toast.error(data.error || 'Failed to delete user');
             }
         });
     }).catch(function() {
-        showUserAlert('Failed to delete user', 'error');
+        Toast.error('Failed to delete user');
     });
 }
 
@@ -312,19 +303,13 @@ function showUserPasswordDialog(id) {
     .then(function(resp) {
         return resp.json().then(function(data) {
             if (resp.ok) {
-                showUserAlert('Password changed', 'success');
+                Toast.success('Password changed');
             } else {
-                showUserAlert(data.error || 'Failed to change password', 'error');
+                Toast.error(data.error || 'Failed to change password');
             }
         });
     }).catch(function() {
-        showUserAlert('Failed to change password', 'error');
+        Toast.error('Failed to change password');
     });
 }
 
-function showUserAlert(message, type) {
-    var el = document.getElementById('user-alert');
-    if (!el) return;
-    el.innerHTML = '<div class="alert alert-' + type + '">' + esc(message) + '</div>';
-    setTimeout(function() { if (el) el.innerHTML = ''; }, 4000);
-}

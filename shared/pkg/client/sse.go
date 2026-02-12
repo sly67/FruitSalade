@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fruitsalade/fruitsalade/shared/pkg/logger"
@@ -26,6 +27,7 @@ type SSEClient struct {
 	httpClient   *http.Client
 	reconnectMin time.Duration
 	reconnectMax time.Duration
+	mu           sync.RWMutex
 	authToken    string
 }
 
@@ -43,6 +45,8 @@ func NewSSEClient(baseURL string) *SSEClient {
 
 // SetAuthToken sets the JWT auth token for SSE requests.
 func (c *SSEClient) SetAuthToken(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.authToken = token
 }
 
@@ -104,8 +108,11 @@ func (c *SSEClient) connect(ctx context.Context, events chan<- SSEEvent) error {
 
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
-	if c.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	c.mu.RLock()
+	token := c.authToken
+	c.mu.RUnlock()
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := c.httpClient.Do(req)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/fruitsalade/fruitsalade/shared/pkg/logger"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
+	"github.com/fruitsalade/fruitsalade/shared/pkg/tree"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
@@ -19,6 +20,8 @@ type CgoFuseBackend struct {
 	core      *ClientCore
 	host      *fuse.FileSystemHost
 	mountPath string
+	ctx       context.Context
+	cancel    context.CancelFunc
 
 	mu      sync.Mutex
 	handles map[uint64]*openHandle
@@ -38,9 +41,12 @@ type openHandle struct {
 
 // NewCgoFuseBackend creates a new cgofuse backend.
 func NewCgoFuseBackend(mountPath string) *CgoFuseBackend {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &CgoFuseBackend{
 		mountPath: mountPath,
 		handles:   make(map[uint64]*openHandle),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
@@ -150,6 +156,7 @@ func (b *CgoFuseBackend) Init() {
 
 func (b *CgoFuseBackend) Destroy() {
 	logger.Info("cgofuse: Destroy")
+	b.cancel()
 }
 
 func (b *CgoFuseBackend) Getattr(path string, stat *fuse.Stat_t, fh uint64) int {
@@ -197,7 +204,7 @@ func (b *CgoFuseBackend) Open(path string, flags int) (int, uint64) {
 	}
 
 	// Read mode: fetch content via core
-	ctx := context.Background()
+	ctx := b.ctx
 	cachePath, err := b.core.FetchContent(ctx, node)
 	if err != nil {
 		logger.Error("Open fetch failed for %s: %v", node.Path, err)
@@ -224,7 +231,7 @@ func (b *CgoFuseBackend) openForWrite(node *models.FileNode, truncate bool) (int
 
 	var size int64
 	if !truncate && node.Size > 0 {
-		fileID := cacheID(node.ID)
+		fileID := tree.CacheID(node.ID)
 		if cachePath, ok := b.core.Cache.Get(fileID); ok {
 			src, err := os.Open(cachePath)
 			if err == nil {
@@ -233,7 +240,7 @@ func (b *CgoFuseBackend) openForWrite(node *models.FileNode, truncate bool) (int
 				tmpFile.Seek(0, io.SeekStart)
 			}
 		} else if b.core.IsOnline() {
-			ctx := context.Background()
+			ctx := b.ctx
 			serverID := strings.TrimPrefix(node.ID, "/")
 			reader, _, err := b.core.Client.FetchContentFull(ctx, serverID)
 			if err == nil {
@@ -285,7 +292,7 @@ func (b *CgoFuseBackend) Read(path string, buff []byte, ofst int64, fh uint64) i
 	}
 
 	// Range read for large uncached files
-	ctx := context.Background()
+	ctx := b.ctx
 	node := b.core.FindByPath(resolvePath(path))
 	if node == nil {
 		return -fuse.ENOENT
@@ -349,7 +356,7 @@ func (b *CgoFuseBackend) Flush(path string, fh uint64) int {
 	reader := io.NewSectionReader(h.tmpFile, 0, h.size)
 	serverPath := strings.TrimPrefix(h.node.Path, "/")
 
-	ctx := context.Background()
+	ctx := b.ctx
 	resp, err := b.core.UploadReader(ctx, serverPath, reader, h.size)
 	if err != nil {
 		logger.Error("Upload failed for %s: %v", h.node.Path, err)
@@ -360,7 +367,7 @@ func (b *CgoFuseBackend) Flush(path string, fh uint64) int {
 
 	// Update cache
 	cacheReader := io.NewSectionReader(h.tmpFile, 0, h.size)
-	fileID := cacheID(h.node.ID)
+	fileID := tree.CacheID(h.node.ID)
 	b.core.Cache.Put(fileID, cacheReader, h.size)
 
 	h.dirty = false
@@ -428,7 +435,7 @@ func (b *CgoFuseBackend) Mkdir(path string, mode uint32) int {
 	}
 
 	serverPath := strings.TrimPrefix(resolvePath(path), "/")
-	ctx := context.Background()
+	ctx := b.ctx
 	if err := b.core.CreateDirectory(ctx, serverPath); err != nil {
 		logger.Error("Mkdir failed for %s: %v", path, err)
 		return -fuse.EIO
@@ -459,13 +466,13 @@ func (b *CgoFuseBackend) Unlink(path string) int {
 	}
 
 	serverPath := strings.TrimPrefix(node.Path, "/")
-	ctx := context.Background()
+	ctx := b.ctx
 	if err := b.core.DeletePath(ctx, serverPath); err != nil {
 		logger.Error("Delete failed for %s: %v", path, err)
 		return -fuse.EIO
 	}
 
-	b.core.Cache.Evict(cacheID(node.ID))
+	b.core.Cache.Evict(tree.CacheID(node.ID))
 
 	dir, name := splitPath(path)
 	b.core.RemoveMetadataChild(resolvePath(dir), name)
@@ -487,7 +494,7 @@ func (b *CgoFuseBackend) Rmdir(path string) int {
 	}
 
 	serverPath := strings.TrimPrefix(node.Path, "/")
-	ctx := context.Background()
+	ctx := b.ctx
 	if err := b.core.DeletePath(ctx, serverPath); err != nil {
 		logger.Error("Rmdir failed for %s: %v", path, err)
 		return -fuse.EIO
@@ -506,7 +513,7 @@ func (b *CgoFuseBackend) Rename(oldpath string, newpath string) int {
 		return -fuse.ENOENT
 	}
 
-	ctx := context.Background()
+	ctx := b.ctx
 	newResolved := resolvePath(newpath)
 
 	if oldNode.IsDir {
@@ -534,7 +541,7 @@ func (b *CgoFuseBackend) Rename(oldpath string, newpath string) int {
 
 		serverOldPath := strings.TrimPrefix(oldNode.Path, "/")
 		b.core.DeletePath(ctx, serverOldPath)
-		b.core.Cache.Evict(cacheID(oldNode.ID))
+		b.core.Cache.Evict(tree.CacheID(oldNode.ID))
 	}
 
 	// Update metadata tree

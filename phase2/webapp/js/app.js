@@ -45,20 +45,26 @@
             return;
         }
 
-        // Close more menu on navigate
+        // Close more menu and detail panel on navigate
         closeMoreMenu();
+        var detailPanel = document.getElementById('detail-panel');
+        if (detailPanel) {
+            detailPanel.classList.remove('open');
+            detailPanel.classList.add('hidden');
+            detailPanel.innerHTML = '';
+        }
 
-        // Show/hide nav and sidebar
-        var nav = document.getElementById('nav');
+        // Show/hide topbar, layout, tab bar
+        var topbar = document.getElementById('topbar');
         var layout = document.getElementById('layout');
         var tabBar = document.getElementById('tab-bar');
         if (route === 'login') {
-            nav.classList.add('hidden');
+            topbar.classList.add('hidden');
             layout.classList.add('hidden');
             tabBar.classList.add('hidden');
             document.getElementById('login-container').classList.remove('hidden');
         } else {
-            nav.classList.remove('hidden');
+            topbar.classList.remove('hidden');
             layout.classList.remove('hidden');
             if (isMobile) {
                 tabBar.classList.remove('hidden');
@@ -66,37 +72,45 @@
             var loginContainer = document.getElementById('login-container');
             if (loginContainer) loginContainer.classList.add('hidden');
 
-            document.getElementById('nav-username').textContent =
+            document.getElementById('topbar-username').textContent =
                 sessionStorage.getItem('username') || '';
 
-            // Update nav links visibility based on admin status
-            updateNavLinks();
+            // Show/hide admin sidebar section
+            var adminSection = document.getElementById('sidebar-admin');
+            if (adminSection) {
+                if (isAdmin()) {
+                    adminSection.classList.remove('hidden');
+                } else {
+                    adminSection.classList.add('hidden');
+                }
+            }
 
-            // Show sidebar tree only on file-related routes
-            var sidebar = document.getElementById('sidebar');
+            // Show sidebar tree on file-related routes
+            var treeArea = document.getElementById('sidebar-tree');
             var treeRoutes = ['browser', 'viewer', 'versions'];
             if (treeRoutes.indexOf(route) !== -1) {
-                sidebar.classList.remove('hidden');
+                treeArea.classList.remove('hidden');
                 // On mobile, sidebar starts closed
                 if (isMobile) {
+                    var sidebar = document.getElementById('sidebar');
                     sidebar.classList.remove('mobile-open');
                     closeSidebarBackdrop();
                 }
                 TreeView.renderTree();
             } else {
-                sidebar.classList.add('hidden');
+                treeArea.classList.add('hidden');
                 closeSidebarBackdrop();
             }
         }
 
-        // Highlight active nav link (top nav)
-        var links = document.querySelectorAll('.nav-links a');
-        for (var i = 0; i < links.length; i++) {
-            var linkRoute = links[i].getAttribute('data-route');
+        // Highlight active sidebar-nav link
+        var navLinks = document.querySelectorAll('.sidebar-nav a[data-route]');
+        for (var i = 0; i < navLinks.length; i++) {
+            var linkRoute = navLinks[i].getAttribute('data-route');
             if (linkRoute === route) {
-                links[i].classList.add('active');
+                navLinks[i].classList.add('active');
             } else {
-                links[i].classList.remove('active');
+                navLinks[i].classList.remove('active');
             }
         }
 
@@ -117,17 +131,6 @@
         } else {
             document.getElementById('app').innerHTML =
                 '<div class="alert alert-error">Page not found</div>';
-        }
-    }
-
-    function updateNavLinks() {
-        var adminLinks = document.querySelectorAll('.nav-links [data-admin]');
-        for (var i = 0; i < adminLinks.length; i++) {
-            if (isAdmin()) {
-                adminLinks[i].classList.remove('hidden');
-            } else {
-                adminLinks[i].classList.add('hidden');
-            }
         }
     }
 
@@ -211,13 +214,105 @@
         openMoreMenu();
     });
 
+    // ── User Dropdown ───────────────────────────────────────────────────────
+
+    var userMenuBtn = document.getElementById('user-menu-btn');
+    var userDropdown = document.getElementById('user-dropdown');
+
+    userMenuBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        userDropdown.classList.toggle('hidden');
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!userDropdown.classList.contains('hidden') && !userDropdown.contains(e.target)) {
+            userDropdown.classList.add('hidden');
+        }
+    });
+
+    document.getElementById('topbar-logout').addEventListener('click', function(e) {
+        e.preventDefault();
+        userDropdown.classList.add('hidden');
+        API.clearToken();
+        window.location.hash = '#login';
+    });
+
+    // ── Dark Mode ───────────────────────────────────────────────────────────
+
+    function initTheme() {
+        var saved = localStorage.getItem('theme');
+        if (saved) {
+            document.documentElement.setAttribute('data-theme', saved);
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+        }
+        updateThemeLabel();
+    }
+
+    function toggleTheme() {
+        var current = document.documentElement.getAttribute('data-theme');
+        var next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('theme', next);
+        updateThemeLabel();
+    }
+
+    function updateThemeLabel() {
+        var btn = document.getElementById('theme-toggle');
+        var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        if (btn) {
+            btn.innerHTML = '<span class="dropdown-icon">' + (isDark ? '&#9728;' : '&#127769;') + '</span> ' +
+                (isDark ? 'Light Mode' : 'Dark Mode');
+        }
+    }
+
+    document.getElementById('theme-toggle').addEventListener('click', function(e) {
+        e.preventDefault();
+        toggleTheme();
+        userDropdown.classList.add('hidden');
+    });
+
+    initTheme();
+
+    // ── Global Search ────────────────────────────────────────────────────────
+
+    var globalSearchInput = document.getElementById('global-search');
+    var globalSearchTimer = null;
+
+    globalSearchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            var q = globalSearchInput.value.trim();
+            if (!q) return;
+            // Navigate to browser and trigger search
+            var route = getRoute();
+            if (route !== 'browser') {
+                window.location.hash = '#browser';
+                // Wait for navigation to render, then set search
+                setTimeout(function() {
+                    var browserSearch = document.getElementById('search-input');
+                    if (browserSearch) {
+                        browserSearch.value = q;
+                        browserSearch.dispatchEvent(new Event('input'));
+                    }
+                }, 100);
+            } else {
+                var browserSearch = document.getElementById('search-input');
+                if (browserSearch) {
+                    browserSearch.value = q;
+                    browserSearch.dispatchEvent(new Event('input'));
+                    browserSearch.focus();
+                }
+            }
+            globalSearchInput.blur();
+        }
+    });
+
     // ── Sidebar Overlay (mobile) ────────────────────────────────────────────
 
     function openSidebarMobile() {
         var sidebar = document.getElementById('sidebar');
-        if (sidebar.classList.contains('hidden')) return;
         sidebar.classList.add('mobile-open');
-        sidebar.classList.remove('collapsed');
 
         // Create backdrop
         if (!document.querySelector('.sidebar-backdrop')) {
@@ -290,7 +385,6 @@
             touchStartY = touch.clientY;
 
             var sidebar = document.getElementById('sidebar');
-            if (sidebar.classList.contains('hidden')) return;
 
             if (touchStartX < 30) {
                 // Near left edge — potential open swipe
@@ -395,29 +489,6 @@
     // ── Event Listeners ─────────────────────────────────────────────────────
 
     window.addEventListener('hashchange', navigate);
-
-    // Logout
-    document.getElementById('btn-logout').addEventListener('click', function() {
-        API.clearToken();
-        window.location.hash = '#login';
-    });
-
-    // Sidebar toggle
-    var toggleBtn = document.getElementById('sidebar-toggle');
-    if (toggleBtn) {
-        toggleBtn.addEventListener('click', function() {
-            var sidebar = document.getElementById('sidebar');
-            if (isMobile) {
-                if (sidebar.classList.contains('mobile-open')) {
-                    closeSidebarMobile();
-                } else {
-                    openSidebarMobile();
-                }
-            } else {
-                sidebar.classList.toggle('collapsed');
-            }
-        });
-    }
 
     // Initial route
     navigate();

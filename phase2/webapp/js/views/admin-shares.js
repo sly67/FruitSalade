@@ -3,7 +3,6 @@ function renderAdminShares() {
     var app = document.getElementById('app');
     app.innerHTML =
         '<div class="toolbar"><h2>Share Links (Admin)</h2></div>' +
-        '<div id="admin-shares-alert"></div>' +
         '<div id="admin-shares-table">Loading...</div>';
 
     loadAdminShares();
@@ -68,20 +67,14 @@ function revokeAdminShareLink(id) {
     API.del('/api/v1/share/' + id).then(function(resp) {
         return resp.json().then(function(data) {
             if (resp.ok) {
-                showAdminShareAlert('Share link revoked', 'success');
+                Toast.show('Share link revoked', 'success');
                 loadAdminShares();
             } else {
-                showAdminShareAlert(data.error || 'Failed to revoke', 'error');
+                Toast.show(data.error || 'Failed to revoke', 'error');
             }
         });
     }).catch(function() {
-        showAdminShareAlert('Failed to revoke share link', 'error');
+        Toast.show('Failed to revoke share link', 'error');
     });
 }
 
-function showAdminShareAlert(message, type) {
-    var el = document.getElementById('admin-shares-alert');
-    if (!el) return;
-    el.innerHTML = '<div class="alert alert-' + type + '">' + esc(message) + '</div>';
-    setTimeout(function() { if (el) el.innerHTML = ''; }, 4000);
-}

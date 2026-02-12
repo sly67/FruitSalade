@@ -4,9 +4,9 @@ var TreeView = (function() {
     var currentPath = '/';
 
     function renderTree() {
-        var sidebar = document.getElementById('sidebar');
-        if (!sidebar) return;
-        sidebar.innerHTML = '<div class="tree-header"><strong>Explorer</strong></div><div id="tree-content">Loading...</div>';
+        var treeArea = document.getElementById('sidebar-tree');
+        if (!treeArea) return;
+        treeArea.innerHTML = '<div class="tree-header"><strong>Explorer</strong></div><div id="tree-content">Loading...</div>';
         loadTree();
     }
 
@@ -46,7 +46,7 @@ var TreeView = (function() {
             html += '<li class="tree-dir">';
             html += '<div class="tree-item" data-path="' + esc(node.path) + '">';
             html += '<span class="tree-toggle">' + (hasChildren ? '&#9654;' : '&nbsp;') + '</span>';
-            html += '<span class="tree-icon">&#128193;</span>';
+            html += FileTypes.icon(node.name, true);
             html += '<span class="tree-label">' + esc(node.name) + '</span>';
             html += '</div>';
             if (hasChildren) {
@@ -61,7 +61,7 @@ var TreeView = (function() {
             html += '<li class="tree-file">';
             html += '<div class="tree-item" data-path="' + esc(node.path) + '">';
             html += '<span class="tree-toggle">&nbsp;</span>';
-            html += '<span class="tree-icon">&#128196;</span>';
+            html += FileTypes.icon(node.name, false);
             html += '<span class="tree-label">' + esc(node.name) + '</span>';
             html += '</div>';
             html += '</li>';

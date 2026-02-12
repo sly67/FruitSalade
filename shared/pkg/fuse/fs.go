@@ -22,6 +22,7 @@ import (
 	"github.com/fruitsalade/fruitsalade/shared/pkg/client"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/logger"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
+	fstree "github.com/fruitsalade/fruitsalade/shared/pkg/tree"
 )
 
 // FruitFS is the main FUSE filesystem.
@@ -135,7 +136,7 @@ func (f *FruitFS) FetchMetadata(ctx context.Context) error {
 	f.mu.Unlock()
 
 	f.stats.MetadataFetches.Add(1)
-	logger.Info("Metadata loaded: %d items", countNodes(tree))
+	logger.Info("Metadata loaded: %d items", fstree.CountNodes(tree))
 	return nil
 }
 
@@ -150,9 +151,9 @@ func (f *FruitFS) RefreshMetadata(ctx context.Context) error {
 	}
 
 	f.mu.Lock()
-	oldCount := countNodes(f.metadata)
+	oldCount := fstree.CountNodes(f.metadata)
 	f.metadata = tree
-	newCount := countNodes(tree)
+	newCount := fstree.CountNodes(tree)
 	f.mu.Unlock()
 
 	f.stats.MetadataFetches.Add(1)
@@ -290,17 +291,6 @@ func (f *FruitFS) StopHealthCheck() {
 	}
 }
 
-func countNodes(node *models.FileNode) int {
-	if node == nil {
-		return 0
-	}
-	count := 1
-	for _, child := range node.Children {
-		count += countNodes(child)
-	}
-	return count
-}
-
 // Mount mounts the filesystem at the given path.
 func (f *FruitFS) Mount(mountPoint string) (*gofuse.Server, error) {
 	if err := os.MkdirAll(mountPoint, 0755); err != nil {
@@ -351,27 +341,12 @@ func (f *FruitFS) IsOnline() bool {
 // Readdir/Lookup/Getattr see the updated tree (new files, changed sizes, etc).
 func (n *FruitNode) resolveMetadata() *models.FileNode {
 	n.fsys.mu.RLock()
-	resolved := findByPath(n.fsys.metadata, n.metadata.Path)
+	resolved := fstree.FindByPath(n.fsys.metadata, n.metadata.Path)
 	n.fsys.mu.RUnlock()
 	if resolved != nil {
 		return resolved
 	}
 	return n.metadata
-}
-
-func findByPath(root *models.FileNode, path string) *models.FileNode {
-	if root == nil {
-		return nil
-	}
-	if root.Path == path {
-		return root
-	}
-	for _, child := range root.Children {
-		if found := findByPath(child, path); found != nil {
-			return found
-		}
-	}
-	return nil
 }
 
 // Ensure FruitNode implements the required interfaces
@@ -707,7 +682,7 @@ func (n *FruitNode) readRange(ctx context.Context, dest []byte, off int64) (gofu
 }
 
 func (n *FruitNode) getFileID() string {
-	return strings.ReplaceAll(n.metadata.ID, "/", "_")
+	return fstree.CacheID(n.metadata.ID)
 }
 
 func (n *FruitNode) fetchFullContent(ctx context.Context) (string, error) {
@@ -840,7 +815,7 @@ func (n *FruitNode) Create(ctx context.Context, name string, flags uint32, mode 
 	n.fsys.mu.Lock()
 	n.metadata.Children = append(n.metadata.Children, childMeta)
 	// Also update the FruitFS tree so resolveMetadata sees the new file
-	if treeNode := findByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
+	if treeNode := fstree.FindByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
 		treeNode.Children = append(treeNode.Children, childMeta)
 	}
 	n.fsys.mu.Unlock()
@@ -908,7 +883,7 @@ func (n *FruitNode) Mkdir(ctx context.Context, name string, mode uint32, out *go
 
 	n.fsys.mu.Lock()
 	n.metadata.Children = append(n.metadata.Children, childMeta)
-	if treeNode := findByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
+	if treeNode := fstree.FindByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
 		treeNode.Children = append(treeNode.Children, childMeta)
 	}
 	n.fsys.mu.Unlock()
@@ -961,13 +936,12 @@ func (n *FruitNode) Unlink(ctx context.Context, name string) syscall.Errno {
 		return syscall.EIO
 	}
 
-	cacheID := strings.ReplaceAll(target.ID, "/", "_")
-	n.fsys.cache.Evict(cacheID)
+	n.fsys.cache.Evict(fstree.CacheID(target.ID))
 
 	n.fsys.mu.Lock()
 	n.removeChildLocked(name)
-	if treeNode := findByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
-		removeChildFromNode(treeNode, name)
+	if treeNode := fstree.FindByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
+		fstree.RemoveChild(treeNode, name)
 	}
 	n.fsys.mu.Unlock()
 
@@ -1010,8 +984,8 @@ func (n *FruitNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 
 	n.fsys.mu.Lock()
 	n.removeChildLocked(name)
-	if treeNode := findByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
-		removeChildFromNode(treeNode, name)
+	if treeNode := fstree.FindByPath(n.fsys.metadata, n.metadata.Path); treeNode != nil && treeNode != n.metadata {
+		fstree.RemoveChild(treeNode, name)
 	}
 	n.fsys.mu.Unlock()
 
@@ -1101,8 +1075,8 @@ func (n *FruitNode) Rename(ctx context.Context, name string, newParent fs.InodeE
 		var content io.ReadCloser
 		var size int64
 
-		cacheID := strings.ReplaceAll(source.ID, "/", "_")
-		if cachePath, ok := n.fsys.cache.Get(cacheID); ok {
+		srcCacheID := fstree.CacheID(source.ID)
+		if cachePath, ok := n.fsys.cache.Get(srcCacheID); ok {
 			f, err := os.Open(cachePath)
 			if err != nil {
 				return syscall.EIO
@@ -1131,7 +1105,7 @@ func (n *FruitNode) Rename(ctx context.Context, name string, newParent fs.InodeE
 
 		serverOldPath := strings.TrimPrefix(source.Path, "/")
 		n.fsys.client.DeletePath(ctx, serverOldPath)
-		n.fsys.cache.Evict(cacheID)
+		n.fsys.cache.Evict(srcCacheID)
 	}
 
 	// Update local metadata tree
@@ -1143,11 +1117,11 @@ func (n *FruitNode) Rename(ctx context.Context, name string, newParent fs.InodeE
 	source.ID = newPath
 	newParentNode.metadata.Children = append(newParentNode.metadata.Children, source)
 	// Also update FruitFS tree
-	if treeSrc := findByPath(n.fsys.metadata, n.metadata.Path); treeSrc != nil && treeSrc != n.metadata {
-		removeChildFromNode(treeSrc, name)
+	if treeSrc := fstree.FindByPath(n.fsys.metadata, n.metadata.Path); treeSrc != nil && treeSrc != n.metadata {
+		fstree.RemoveChild(treeSrc, name)
 	}
-	if treeDst := findByPath(n.fsys.metadata, newParentNode.metadata.Path); treeDst != nil && treeDst != newParentNode.metadata {
-		removeChildFromNode(treeDst, newName)
+	if treeDst := fstree.FindByPath(n.fsys.metadata, newParentNode.metadata.Path); treeDst != nil && treeDst != newParentNode.metadata {
+		fstree.RemoveChild(treeDst, newName)
 		treeDst.Children = append(treeDst.Children, source)
 	}
 	n.fsys.mu.Unlock()
@@ -1243,15 +1217,6 @@ func (n *FruitNode) removeChildLocked(name string) {
 	for i, child := range children {
 		if child.Name == name {
 			n.metadata.Children = append(children[:i], children[i+1:]...)
-			return
-		}
-	}
-}
-
-func removeChildFromNode(node *models.FileNode, name string) {
-	for i, child := range node.Children {
-		if child.Name == name {
-			node.Children = append(node.Children[:i], node.Children[i+1:]...)
 			return
 		}
 	}

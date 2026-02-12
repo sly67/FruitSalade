@@ -10,7 +10,7 @@ function renderViewer() {
     var filePath = '/' + decodeURIComponent(hash);
     var fileName = filePath.split('/').pop();
     var ext = (fileName.indexOf('.') !== -1) ? '.' + fileName.split('.').pop().toLowerCase() : '';
-    var fileType = detectFileType(ext);
+    var fileType = FileTypes.detect(ext);
 
     var app = document.getElementById('app');
     app.innerHTML =
@@ -56,20 +56,6 @@ function renderViewer() {
     }
 }
 
-function detectFileType(ext) {
-    var textExts = ['.txt', '.md', '.json', '.js', '.css', '.html', '.py', '.go', '.sh',
-        '.yml', '.yaml', '.xml', '.csv', '.log', '.ini', '.conf', '.toml', '.env',
-        '.sql', '.rs', '.ts', '.tsx', '.jsx', '.c', '.cpp', '.h', '.java', '.rb',
-        '.php', '.lua', '.makefile', '.dockerfile', '.gitignore', '.mod', '.sum',
-        '.cfg', '.properties', '.bat', '.ps1', '.r', '.swift', '.kt', '.scala'];
-    var imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp', '.ico'];
-    var pdfExts = ['.pdf'];
-
-    if (textExts.indexOf(ext) !== -1 || ext === '') return 'text';
-    if (imageExts.indexOf(ext) !== -1) return 'image';
-    if (pdfExts.indexOf(ext) !== -1) return 'pdf';
-    return 'other';
-}
 
 function renderTextViewer(filePath) {
     var content = document.getElementById('viewer-content');

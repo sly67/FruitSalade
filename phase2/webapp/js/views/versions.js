@@ -80,7 +80,7 @@ function renderVersionedFileList(files) {
         var f = files[i];
         html += '<tr class="file-row">' +
             '<td data-label="File"><a class="file-name" href="#versions' + esc(f.path) + '">' +
-                '<span class="file-icon">&#128196;</span>' + esc(f.name) + '</a></td>' +
+                FileTypes.icon(f.name, false) + esc(f.name) + '</a></td>' +
             '<td data-label="Path" class="ver-path"><code>' + esc(f.path) + '</code></td>' +
             '<td data-label="Version">v' + f.current_version + '</td>' +
             '<td data-label="History"><span class="badge badge-blue">' + f.version_count + ' version' + (f.version_count !== 1 ? 's' : '') + '</span></td>' +
@@ -111,7 +111,7 @@ function renderFileVersions(filePath) {
             '</div>' +
         '</div>' +
         '<div class="ver-file-header">' +
-            '<span class="file-icon" style="font-size:1.5rem">&#128196;</span>' +
+            '<span style="font-size:1.5rem">' + FileTypes.icon(fileName, false) + '</span>' +
             '<div>' +
                 '<div class="ver-file-name">' + esc(fileName) + '</div>' +
                 '<div class="ver-file-path"><code>' + esc(filePath) + '</code></div>' +
@@ -171,7 +171,7 @@ function renderVersionTimeline(data, filePath) {
     // Previous versions
     for (var i = 0; i < versions.length; i++) {
         var v = versions[i];
-        var isText = isTextFile(filePath);
+        var isText = FileTypes.isText(filePath);
 
         html += '<div class="ver-timeline-item">' +
             '<div class="ver-timeline-dot"></div>' +
@@ -417,14 +417,3 @@ function simpleDiff(a, b) {
     return ops;
 }
 
-function isTextFile(path) {
-    var ext = '';
-    var dot = path.lastIndexOf('.');
-    if (dot !== -1) ext = path.substring(dot).toLowerCase();
-    var textExts = ['.txt', '.md', '.json', '.js', '.css', '.html', '.py', '.go', '.sh',
-        '.yml', '.yaml', '.xml', '.csv', '.log', '.ini', '.conf', '.toml', '.env',
-        '.sql', '.rs', '.ts', '.tsx', '.jsx', '.c', '.cpp', '.h', '.java', '.rb',
-        '.php', '.lua', '.cfg', '.properties', '.bat', '.ps1', '.r', '.swift', '.kt',
-        '.scala', '.mod', '.sum'];
-    return textExts.indexOf(ext) !== -1 || ext === '';
-}

@@ -223,6 +223,36 @@ func (s *ShareLinkStore) ListAll(ctx context.Context, activeOnly bool) ([]ShareL
 	return links, rows.Err()
 }
 
+// ListByUser returns active share links created by a specific user.
+func (s *ShareLinkStore) ListByUser(ctx context.Context, userID int) ([]ShareLinkWithUser, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT sl.id, sl.path, sl.created_by, u.username, sl.expires_at,
+		        sl.max_downloads, sl.download_count, sl.is_active, sl.created_at
+		 FROM share_links sl
+		 JOIN users u ON u.id = sl.created_by
+		 WHERE sl.created_by = $1 AND sl.is_active = TRUE
+		 ORDER BY sl.created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list share links by user: %w", err)
+	}
+	defer rows.Close()
+
+	var links []ShareLinkWithUser
+	for rows.Next() {
+		var l ShareLinkWithUser
+		var expiresAt sql.NullTime
+		if err := rows.Scan(&l.ID, &l.Path, &l.CreatedBy, &l.CreatedByUser,
+			&expiresAt, &l.MaxDownloads, &l.DownloadCount, &l.IsActive, &l.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan share link: %w", err)
+		}
+		if expiresAt.Valid {
+			l.ExpiresAt = &expiresAt.Time
+		}
+		links = append(links, l)
+	}
+	return links, rows.Err()
+}
+
 // ListByPath returns active share links for a specific file path.
 func (s *ShareLinkStore) ListByPath(ctx context.Context, path string) ([]ShareLinkWithUser, error) {
 	rows, err := s.db.QueryContext(ctx,
