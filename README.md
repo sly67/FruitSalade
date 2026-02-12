@@ -29,6 +29,7 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **File visibility** -- per-file visibility (public/group/private) with group ownership
 - **File properties** -- aggregated metadata, ownership, permissions, shares, and version count
 - **Version explorer** -- browse all versioned files with timeline, preview, and diff
+- **Webapp** -- full-featured file browser with dark mode, sortable columns, kebab/context menus, multi-select batch actions, inline rename, detail panel, toast notifications
 - **Windows client** -- CfAPI + cgofuse dual backend with Windows Service support
 - **CI pipeline** -- GitHub Actions (lint, test, build, Docker)
 - **Docker-ready** -- full test environment with compose (server, 2 FUSE clients, PostgreSQL, MinIO)
@@ -113,7 +114,8 @@ fruitsalade/
 │       ├── logger/         # Simple logger
 │       ├── models/         # Data types (FileNode, CacheEntry)
 │       ├── protocol/       # API request/response types
-│       └── retry/          # Retry with backoff
+│       ├── retry/          # Retry with backoff
+│       └── tree/           # Shared tree utilities (FindByPath, CacheID, CountNodes)
 │
 ├── phase0/                 # Proof of Concept (local filesystem backend)
 ├── phase1/                 # MVP (PostgreSQL + S3 + JWT + Docker)
@@ -181,6 +183,7 @@ Content responses include `ETag` (SHA256 hash) and `X-Version` headers.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/api/v1/shares` | GET | List current user's active share links |
 | `/api/v1/share/{path}` | POST | Create share link `{password?, expires_in_sec?, max_downloads?}` |
 | `/api/v1/share/{id}` | DELETE | Revoke share link |
 | `/api/v1/share/{token}` | GET | Download via share link (public, no auth) |
@@ -212,6 +215,7 @@ Content responses include `ETag` (SHA256 hash) and `X-Version` headers.
 | `/api/v1/admin/stats` | GET | Dashboard stats (admin) |
 | `/api/v1/admin/config` | GET/PUT | Get/update server configuration (admin) |
 | `/admin/` | - | Admin web UI |
+| `/app/` | - | Webapp file browser |
 
 ### Groups (Admin)
 

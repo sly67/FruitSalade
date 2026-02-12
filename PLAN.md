@@ -90,93 +90,96 @@ Build any phase with: `make phase0`, `make phase1`, `make phase2`
 
 ---
 
-## Phase 1: MVP
+## Phase 1: MVP ✅ COMPLETE
 
 **Goal:** Production-ready server and Linux client.
 
-### 1.1 PostgreSQL Metadata [M]
+### 1.1 PostgreSQL Metadata [M] ✅
 *Location: `phase1/internal/metadata/postgres/`*
-- [ ] Add `sqlx` and `lib/pq` dependencies
-- [ ] Design schema (files, directories, versions)
-- [ ] Implement PostgresStore
-- [ ] Add migrations in `phase1/migrations/`
+- [x] Add `sqlx` and `lib/pq` dependencies
+- [x] Design schema (files, directories, versions)
+- [x] Implement PostgresStore
+- [x] Add migrations in `phase1/migrations/`
 
-### 1.2 S3 Storage Backend [M]
+### 1.2 S3 Storage Backend [M] ✅
 *Location: `phase1/internal/storage/s3/`*
-- [ ] Add `aws-sdk-go-v2` dependency
-- [ ] Implement S3Storage
-- [ ] Support MinIO for local dev
-- [ ] Range reads from S3
+- [x] Add `aws-sdk-go-v2` dependency
+- [x] Implement S3Storage
+- [x] Support MinIO for local dev
+- [x] Range reads from S3
 
-### 1.3 JWT Authentication [M]
+### 1.3 JWT Authentication [M] ✅
 *Location: `phase1/internal/auth/`*
-- [ ] Add `golang-jwt/jwt/v5`
-- [ ] `POST /api/v1/auth/token` — login
-- [ ] Auth middleware for protected routes
-- [ ] Token refresh
-- [ ] Device registration
+- [x] Add `golang-jwt/jwt/v5`
+- [x] `POST /api/v1/auth/token` — login
+- [x] Auth middleware for protected routes
+- [x] Token refresh
+- [x] Device registration
 
-### 1.4 Docker Deployment [S]
+### 1.4 Docker Deployment [S] ✅
 *Location: `phase1/docker/`*
 - [x] Dockerfile (multi-stage build)
 - [x] docker-compose.yml (postgres, minio, server)
-- [ ] Health checks
-- [ ] Environment configuration
+- [x] Health checks
+- [x] Environment configuration
 
-### 1.5 Client — Pin/Unpin [S]
-- [ ] Persistent pin storage (JSON file or SQLite)
-- [ ] Exclude pinned from eviction
-- [ ] CLI: `fruitsalade pin <path>`
-- [ ] CLI: `fruitsalade unpin <path>`
-- [ ] CLI: `fruitsalade pinned` — list pinned
+### 1.5 Client — Pin/Unpin [S] ✅
+- [x] Persistent pin storage (JSON file)
+- [x] Exclude pinned from eviction
+- [x] CLI: `fruitsalade pin <path>`
+- [x] CLI: `fruitsalade unpin <path>`
+- [x] CLI: `fruitsalade pinned` — list pinned
 
-### 1.6 Client — Systemd Service [S]
-- [ ] Create `fruitsalade.service` unit file
-- [ ] Handle SIGTERM gracefully (unmount)
-- [ ] Logging to journald
-- [ ] Installation docs
+### 1.6 Client — Systemd Service [S] ✅
+- [x] Create `fruitsalade.service` unit file
+- [x] Handle SIGTERM gracefully (unmount)
+- [x] Logging to journald
+- [x] Installation docs
 
-### 1.7 Documentation [S]
-- [ ] README.md with installation
-- [ ] API documentation
-- [ ] Architecture diagrams
-- [ ] Getting started guide
+### 1.7 Documentation [S] ✅
+- [x] README.md with installation
+- [x] API documentation
+- [x] Architecture diagrams
+- [x] Getting started guide
 
 ---
 
-## Phase 2: Production
+## Phase 2: Production ✅ COMPLETE
 
 **Goal:** Full-featured system with Windows support.
 
-### 2.1 Windows Client [XL]
+### 2.1 Windows Client [XL] ✅
 *Location: `phase2/windows/` and `phase2/cmd/windows-client/`*
-- [ ] C++ CfAPI shim:
-  - Sync root registration
-  - Placeholder creation
-  - Hydration callbacks
-- [ ] CGO integration with Go core
-- [ ] Windows installer
-- [ ] Test with Explorer, common apps
+- [x] C++ CfAPI shim (sync root, placeholders, hydration callbacks)
+- [x] CGO integration with Go core
+- [x] cgofuse cross-platform FUSE backend
+- [x] Windows Service support
 
-### 2.2 Observability [M]
-- [ ] Prometheus metrics (`/metrics`)
-- [ ] Structured logging (JSON)
-- [ ] Grafana dashboard
-- [ ] Request tracing
+### 2.2 Observability [M] ✅
+- [x] Prometheus metrics (`/metrics`)
+- [x] Structured logging (zap JSON)
+- [x] Grafana dashboard
+- [x] Request logging with correlation IDs
 
-### 2.3 Admin UI [L]
-- [ ] Admin API endpoints
-- [ ] Web UI (Vue/React)
-- [ ] User management
-- [ ] Device management
-- [ ] Storage statistics
+### 2.3 Admin UI [L] ✅
+- [x] Admin API endpoints
+- [x] Embedded web UI (vanilla HTML/CSS/JS, `go:embed`)
+- [x] User management (CRUD, groups, password changes)
+- [x] Storage statistics and dashboard
 
-### 2.4 Multi-User Support [L]
-- [ ] User isolation
-- [ ] Sharing/permissions
-- [ ] Per-user quotas
+### 2.4 Multi-User Support [L] ✅
+- [x] User groups with nested hierarchy and RBAC roles
+- [x] ACL-based sharing/permissions with path inheritance
+- [x] Per-user quotas (storage, bandwidth, RPM, upload size)
+- [x] File visibility (public/group/private)
 
-### 2.5 Mobile Apps [XL]
+### 2.5 Webapp [L] ✅
+- [x] Full-featured file browser at `/app/`
+- [x] Dark mode, sortable columns, kebab/context menus
+- [x] Multi-select batch actions, inline rename, detail panel
+- [x] Toast notifications, shared utilities, file-type icons
+
+### 2.6 Mobile Apps [XL]
 - [ ] API adjustments for mobile
 - [ ] Android app
 - [ ] iOS app

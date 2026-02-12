@@ -146,6 +146,24 @@ Extend the MVP into a full-featured production system with write support, observ
 - [x] Windows Service support (install/uninstall via CLI flags)
 - [x] Incremental metadata diff for placeholder updates
 
+### 2.21 Webapp Overhaul (Complete)
+- [x] Shared JS utilities: Toast notifications, Modal helper, FileTypes (deduplicates code across all views)
+- [x] Layout restructure: topbar with global search + user dropdown, sidebar navigation with tree
+- [x] Dark mode: CSS custom properties, localStorage persistence, system preference detection
+- [x] File browser: sortable columns (name/size/version/modified), kebab (3-dot) and right-click context menus
+- [x] Inline rename: click Rename, edit name in-place, Enter to commit, Escape to cancel
+- [x] Multi-select: checkboxes per row, shift+click range selection, select-all header checkbox
+- [x] Batch actions: batch delete, batch download, batch visibility change
+- [x] Detail panel: sliding right sidebar for file properties (replaces modal)
+- [x] My Shares view: list user's share links with copy/revoke actions
+- [x] File-type-aware colored icons throughout (tree, browser, versions)
+- [x] Served at `/app/` via `go:embed`, no build step
+
+### 2.22 Go Client Fixes (Complete)
+- [x] Shared tree utilities extracted to `shared/pkg/tree/` (FindByPath, CacheID, CountNodes, Flatten)
+- [x] SSE mutex fix: `sync.RWMutex` for thread-safe `authToken` access
+- [x] cgofuse context: stored root context, cancelled on `Destroy()` for clean shutdown
+
 ## API Endpoints
 
 ### Read Operations
@@ -190,6 +208,7 @@ Extend the MVP into a full-featured production system with write support, observ
 ### Share Links
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
+| `/api/v1/shares` | GET | Yes | List current user's active share links |
 | `/api/v1/share/{path}` | POST | Yes | Create link `{password?, expires_in_sec?, max_downloads?}` |
 | `/api/v1/share/{id}` | DELETE | Yes | Revoke link |
 | `/api/v1/share/{token}` | GET | No | Download via link (public) |
@@ -214,6 +233,7 @@ Extend the MVP into a full-featured production system with write support, observ
 | `/api/v1/admin/config` | GET | Admin | Get server configuration |
 | `/api/v1/admin/config` | PUT | Admin | Update server configuration |
 | `/admin/` | - | - | Admin web UI (auth in-app) |
+| `/app/` | - | - | Webapp file browser (auth in-app) |
 
 ### Groups (Admin)
 | Endpoint | Method | Auth | Description |
