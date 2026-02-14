@@ -231,3 +231,39 @@ type ShareLinkInfo struct {
 	DownloadCount int        `json:"download_count"`
 	CreatedAt     time.Time  `json:"created_at"`
 }
+
+// StorageLocationRequest is the body for POST/PUT /api/v1/admin/storage.
+type StorageLocationRequest struct {
+	Name        string                 `json:"name"`
+	GroupID     *int                   `json:"group_id,omitempty"`
+	BackendType string                 `json:"backend_type"`
+	Config      map[string]interface{} `json:"config"`
+	Priority    int                    `json:"priority"`
+}
+
+// StorageLocationResponse is returned by storage admin endpoints.
+type StorageLocationResponse struct {
+	ID          int                    `json:"id"`
+	Name        string                 `json:"name"`
+	GroupID     *int                   `json:"group_id,omitempty"`
+	BackendType string                 `json:"backend_type"`
+	Config      map[string]interface{} `json:"config"`
+	Priority    int                    `json:"priority"`
+	IsDefault   bool                   `json:"is_default"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+}
+
+// StorageStatsResponse is returned by GET /api/v1/admin/storage/{id}/stats.
+type StorageStatsResponse struct {
+	LocationID int   `json:"location_id"`
+	FileCount  int64 `json:"file_count"`
+	TotalSize  int64 `json:"total_size"`
+}
+
+// StorageTestResponse is returned by POST /api/v1/admin/storage/{id}/test.
+type StorageTestResponse struct {
+	Success     bool   `json:"success"`
+	BackendType string `json:"backend_type,omitempty"`
+	Error       string `json:"error,omitempty"`
+}

@@ -92,8 +92,9 @@ phase1-exec-b:
 #==============================================================================
 # PHASE 2 - Production (Full Features)
 #==============================================================================
-.PHONY: phase2 phase2-server phase2-fuse phase2-winclient phase2-windows phase2-test
+.PHONY: phase2 phase2-server phase2-fuse phase2-seed phase2-winclient phase2-windows phase2-test
 .PHONY: phase2-docker phase2-test-env phase2-test-env-down phase2-test-env-logs phase2-exec-a phase2-exec-b
+.PHONY: phase2-single phase2-single-up phase2-single-down phase2-single-run
 
 phase2: phase2-server phase2-fuse
 
@@ -104,6 +105,10 @@ phase2-server:
 phase2-fuse:
 	@echo "Building Phase 2 FUSE Client..."
 	cd phase2 && go build -o ../bin/phase2-fuse ./cmd/fuse-client
+
+phase2-seed:
+	@echo "Building Phase 2 Seed Tool..."
+	cd phase2 && go build -o ../bin/phase2-seed ./cmd/seed-tool
 
 phase2-winclient:
 	@echo "Building Phase 2 Windows Client (cgofuse, native)..."
@@ -140,6 +145,28 @@ phase2-exec-a:
 
 phase2-exec-b:
 	docker compose -f phase2/docker/docker-compose.yml exec client-b sh
+
+# Single-container deployment (PostgreSQL + server, local storage)
+phase2-single:
+	@echo "Building Phase 2 single-container Docker image..."
+	docker build -t fruitsalade:single -f phase2/docker/Dockerfile.single .
+
+phase2-single-up:
+	@echo "Starting Phase 2 single-container deployment..."
+	docker compose -f phase2/docker/docker-compose.single.yml up -d --build
+
+phase2-single-down:
+	@echo "Stopping Phase 2 single-container deployment..."
+	docker compose -f phase2/docker/docker-compose.single.yml down
+
+phase2-single-run:
+	@echo "Running Phase 2 single container (docker run)..."
+	docker run --rm -p 8080:8080 -p 9090:9090 \
+		-e JWT_SECRET=change-me-in-production \
+		-e SEED_DATA=true \
+		-v fruitsalade_pg:/data/postgres \
+		-v fruitsalade_storage:/data/storage \
+		fruitsalade:single
 
 #==============================================================================
 # SHARED
@@ -208,6 +235,7 @@ help:
 	@echo ""
 	@echo "Phase 2 (Production):"
 	@echo "  make phase2              Build server + FUSE client"
+	@echo "  make phase2-seed         Build Phase 2 seed tool"
 	@echo "  make phase2-winclient    Build Windows client (native, cgofuse)"
 	@echo "  make phase2-windows      Cross-compile Windows client (requires CGO)"
 	@echo "  make phase2-test         Run Phase 2 tests"
@@ -217,6 +245,10 @@ help:
 	@echo "  make phase2-test-env-logs Follow logs from test env"
 	@echo "  make phase2-exec-a       Shell into client-a"
 	@echo "  make phase2-exec-b       Shell into client-b"
+	@echo "  make phase2-single       Build single-container Docker image"
+	@echo "  make phase2-single-up    Start single-container (compose)"
+	@echo "  make phase2-single-down  Stop single-container"
+	@echo "  make phase2-single-run   Run single container (docker run)"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make test              Run all tests"

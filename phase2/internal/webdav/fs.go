@@ -18,12 +18,13 @@ import (
 	"github.com/fruitsalade/fruitsalade/phase2/internal/auth"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/logging"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metadata/postgres"
-	s3storage "github.com/fruitsalade/fruitsalade/phase2/internal/storage/s3"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/storage"
 )
 
-// FruitFS implements webdav.FileSystem backed by S3 + PostgreSQL.
+// FruitFS implements webdav.FileSystem backed by multi-backend storage + PostgreSQL.
 type FruitFS struct {
-	storage *s3storage.Storage
+	metadata      *postgres.Store
+	storageRouter *storage.Router
 }
 
 var _ webdav.FileSystem = (*FruitFS)(nil)
@@ -66,7 +67,7 @@ func (fs *FruitFS) Mkdir(ctx context.Context, name string, perm os.FileMode) err
 		row.OwnerID = &ownerID
 	}
 
-	return fs.storage.Metadata().UpsertFile(ctx, row)
+	return fs.metadata.UpsertFile(ctx, row)
 }
 
 // OpenFile opens or creates a file.
@@ -86,7 +87,7 @@ func (fs *FruitFS) OpenFile(ctx context.Context, name string, flag int, perm os.
 	}
 
 	// Read mode — check if it exists
-	row, err := fs.storage.Metadata().GetFileRow(ctx, name)
+	row, err := fs.metadata.GetFileRow(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +110,7 @@ func (fs *FruitFS) RemoveAll(ctx context.Context, name string) error {
 		return fmt.Errorf("cannot remove root")
 	}
 
-	row, err := fs.storage.Metadata().GetFileRow(ctx, name)
+	row, err := fs.metadata.GetFileRow(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -118,22 +119,28 @@ func (fs *FruitFS) RemoveAll(ctx context.Context, name string) error {
 	}
 
 	if row.IsDir {
-		// Delete children from S3
-		children, _ := fs.storage.Metadata().ListDir(ctx, name)
+		// Delete children from storage
+		children, _ := fs.metadata.ListDir(ctx, name)
 		for _, child := range children {
 			if !child.IsDir {
 				s3Key := strings.TrimPrefix(child.Path, "/")
-				fs.storage.DeleteObject(ctx, s3Key)
+				backend, _, err := fs.storageRouter.GetDefault()
+				if err == nil {
+					backend.DeleteObject(ctx, s3Key)
+				}
 			}
 		}
-		_, err := fs.storage.Metadata().DeleteTree(ctx, name)
+		_, err := fs.metadata.DeleteTree(ctx, name)
 		return err
 	}
 
-	// Single file
+	// Single file — resolve backend from file's storage location
 	s3Key := strings.TrimPrefix(name, "/")
-	fs.storage.DeleteObject(ctx, s3Key)
-	return fs.storage.Metadata().DeleteFile(ctx, name)
+	backend, _, err := fs.storageRouter.ResolveForFile(ctx, row.StorageLocID, nil)
+	if err == nil {
+		backend.DeleteObject(ctx, s3Key)
+	}
+	return fs.metadata.DeleteFile(ctx, name)
 }
 
 // Rename moves a file from oldName to newName.
@@ -141,7 +148,7 @@ func (fs *FruitFS) Rename(ctx context.Context, oldName, newName string) error {
 	oldName = normalizePath(oldName)
 	newName = normalizePath(newName)
 
-	row, err := fs.storage.Metadata().GetFileRow(ctx, oldName)
+	row, err := fs.metadata.GetFileRow(ctx, oldName)
 	if err != nil {
 		return err
 	}
@@ -153,10 +160,14 @@ func (fs *FruitFS) Rename(ctx context.Context, oldName, newName string) error {
 		return fmt.Errorf("directory rename not supported")
 	}
 
-	// Copy S3 object
+	// Copy object on the same backend
 	oldKey := strings.TrimPrefix(oldName, "/")
 	newKey := strings.TrimPrefix(newName, "/")
-	if err := fs.storage.CopyObject(ctx, oldKey, newKey); err != nil {
+	backend, _, err := fs.storageRouter.ResolveForFile(ctx, row.StorageLocID, nil)
+	if err != nil {
+		return err
+	}
+	if err := backend.CopyObject(ctx, oldKey, newKey); err != nil {
 		return err
 	}
 
@@ -167,25 +178,26 @@ func (fs *FruitFS) Rename(ctx context.Context, oldName, newName string) error {
 	}
 	h := sha256.Sum256([]byte(newName))
 	newRow := &postgres.FileRow{
-		ID:         fmt.Sprintf("%x", h[:8]),
-		Name:       filepath.Base(newName),
-		Path:       newName,
-		ParentPath: parentPath,
-		Size:       row.Size,
-		ModTime:    time.Now(),
-		IsDir:      false,
-		Hash:       row.Hash,
-		S3Key:      newKey,
-		Version:    1,
-		OwnerID:    row.OwnerID,
+		ID:           fmt.Sprintf("%x", h[:8]),
+		Name:         filepath.Base(newName),
+		Path:         newName,
+		ParentPath:   parentPath,
+		Size:         row.Size,
+		ModTime:      time.Now(),
+		IsDir:        false,
+		Hash:         row.Hash,
+		S3Key:        newKey,
+		Version:      1,
+		OwnerID:      row.OwnerID,
+		StorageLocID: row.StorageLocID,
 	}
-	if err := fs.storage.Metadata().UpsertFile(ctx, newRow); err != nil {
+	if err := fs.metadata.UpsertFile(ctx, newRow); err != nil {
 		return err
 	}
 
 	// Delete old
-	fs.storage.DeleteObject(ctx, oldKey)
-	return fs.storage.Metadata().DeleteFile(ctx, oldName)
+	backend.DeleteObject(ctx, oldKey)
+	return fs.metadata.DeleteFile(ctx, oldName)
 }
 
 // Stat returns file info for a path.
@@ -196,7 +208,7 @@ func (fs *FruitFS) Stat(ctx context.Context, name string) (os.FileInfo, error) {
 		return &fileInfo{name: "/", isDir: true, modTime: time.Now()}, nil
 	}
 
-	row, err := fs.storage.Metadata().GetFileRow(ctx, name)
+	row, err := fs.metadata.GetFileRow(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -239,12 +251,18 @@ func (f *FruitFile) Close() error {
 		return nil
 	}
 
-	// Upload buffer to S3
+	// Upload buffer to storage
 	name := f.name
 	content := f.buf.Bytes()
 	s3Key := strings.TrimPrefix(name, "/")
 
-	if err := f.fs.storage.PutObject(f.ctx, s3Key, bytes.NewReader(content), int64(len(content))); err != nil {
+	// Resolve which backend to use for this upload
+	backend, loc, err := f.fs.storageRouter.ResolveForUpload(f.ctx, name, nil)
+	if err != nil {
+		return fmt.Errorf("resolve storage backend: %w", err)
+	}
+
+	if err := backend.PutObject(f.ctx, s3Key, bytes.NewReader(content), int64(len(content))); err != nil {
 		return err
 	}
 
@@ -254,7 +272,7 @@ func (f *FruitFile) Close() error {
 
 	// Check for existing entry (versioning)
 	newVersion := 1
-	existing, _ := f.fs.storage.Metadata().GetFileRow(f.ctx, name)
+	existing, _ := f.fs.metadata.GetFileRow(f.ctx, name)
 	if existing != nil && !existing.IsDir {
 		newVersion = existing.Version + 1
 	}
@@ -265,16 +283,17 @@ func (f *FruitFile) Close() error {
 	}
 	idH := sha256.Sum256([]byte(name))
 	row := &postgres.FileRow{
-		ID:         fmt.Sprintf("%x", idH[:8]),
-		Name:       filepath.Base(name),
-		Path:       name,
-		ParentPath: parentPath,
-		Size:       int64(len(content)),
-		ModTime:    time.Now(),
-		IsDir:      false,
-		Hash:       hashStr,
-		S3Key:      s3Key,
-		Version:    newVersion,
+		ID:           fmt.Sprintf("%x", idH[:8]),
+		Name:         filepath.Base(name),
+		Path:         name,
+		ParentPath:   parentPath,
+		Size:         int64(len(content)),
+		ModTime:      time.Now(),
+		IsDir:        false,
+		Hash:         hashStr,
+		S3Key:        s3Key,
+		Version:      newVersion,
+		StorageLocID: &loc.ID,
 	}
 
 	if claims := auth.GetClaims(f.ctx); claims != nil && existing == nil {
@@ -282,7 +301,7 @@ func (f *FruitFile) Close() error {
 		row.OwnerID = &ownerID
 	}
 
-	if err := f.fs.storage.Metadata().UpsertFile(f.ctx, row); err != nil {
+	if err := f.fs.metadata.UpsertFile(f.ctx, row); err != nil {
 		return err
 	}
 
@@ -299,12 +318,16 @@ func (f *FruitFile) Read(p []byte) (int, error) {
 		return 0, fmt.Errorf("file opened for writing")
 	}
 
-	// Lazy fetch from S3
+	// Lazy fetch from storage backend
 	if f.reader == nil {
 		if f.row == nil {
 			return 0, io.EOF
 		}
-		reader, size, err := f.fs.storage.GetContent(f.ctx, f.row.ID, f.offset, 0)
+		backend, _, err := f.fs.storageRouter.ResolveForFile(f.ctx, f.row.StorageLocID, nil)
+		if err != nil {
+			return 0, fmt.Errorf("resolve storage backend: %w", err)
+		}
+		reader, size, err := backend.GetObject(f.ctx, f.row.S3Key, f.offset, 0)
 		if err != nil {
 			return 0, err
 		}
@@ -359,7 +382,7 @@ func (f *FruitFile) Readdir(count int) ([]os.FileInfo, error) {
 		return nil, fmt.Errorf("not a directory")
 	}
 
-	children, err := f.fs.storage.ListDir(f.ctx, f.name)
+	children, err := f.fs.metadata.ListDir(f.ctx, f.name)
 	if err != nil {
 		return nil, err
 	}
@@ -412,11 +435,11 @@ type fileInfo struct {
 	modTime time.Time
 }
 
-func (fi *fileInfo) Name() string      { return fi.name }
-func (fi *fileInfo) Size() int64       { return fi.size }
-func (fi *fileInfo) IsDir() bool       { return fi.isDir }
+func (fi *fileInfo) Name() string       { return fi.name }
+func (fi *fileInfo) Size() int64        { return fi.size }
+func (fi *fileInfo) IsDir() bool        { return fi.isDir }
 func (fi *fileInfo) ModTime() time.Time { return fi.modTime }
-func (fi *fileInfo) Sys() interface{}  { return nil }
+func (fi *fileInfo) Sys() interface{}   { return nil }
 
 func (fi *fileInfo) Mode() os.FileMode {
 	if fi.isDir {

@@ -217,6 +217,7 @@ function showGroupDetail(groupID, groupName) {
             '<button class="btn btn-sm group-tab active" data-tab="members">Members</button>' +
             '<button class="btn btn-sm btn-outline group-tab" data-tab="permissions">Permissions</button>' +
             '<button class="btn btn-sm btn-outline group-tab" data-tab="subgroups">Subgroups</button>' +
+            '<button class="btn btn-sm btn-outline group-tab" data-tab="storage">Storage</button>' +
         '</div>' +
         '<div id="group-tab-content"></div>';
 
@@ -242,6 +243,8 @@ function showGroupDetail(groupID, groupName) {
                 loadGroupPermissions(groupID);
             } else if (tabName === 'subgroups') {
                 loadGroupSubgroups(groupID, groupName);
+            } else if (tabName === 'storage') {
+                loadGroupStorage(groupID, groupName);
             }
         });
     });
@@ -517,3 +520,88 @@ function loadGroupSubgroups(groupID, groupName) {
         });
     });
 }
+
+// ─── Storage Tab ────────────────────────────────────────────────────────────
+
+function loadGroupStorage(groupID, groupName) {
+    var content = document.getElementById('group-tab-content');
+    if (!content) return;
+    content.innerHTML = '<p>Loading storage locations...</p>';
+
+    API.get('/api/v1/admin/storage').then(function(locations) {
+        var groupLocations = [];
+        if (locations) {
+            for (var i = 0; i < locations.length; i++) {
+                if (locations[i].group_id === groupID) {
+                    groupLocations.push(locations[i]);
+                }
+            }
+        }
+
+        var html = '<div class="group-section">';
+
+        html += '<div style="margin-bottom:1rem">' +
+            '<button class="btn btn-sm" id="btn-add-group-storage">Add Storage Location for this Group</button>' +
+        '</div>';
+
+        if (groupLocations.length === 0) {
+            html += '<p style="color:var(--text-muted);padding:0.5rem 0">No storage locations assigned. Files use the default backend.</p>';
+        } else {
+            html += '<table class="responsive-table"><thead><tr>' +
+                '<th>Name</th><th>Type</th><th>Priority</th><th>Default</th><th></th>' +
+            '</tr></thead><tbody>';
+
+            for (var j = 0; j < groupLocations.length; j++) {
+                var loc = groupLocations[j];
+                html += '<tr>' +
+                    '<td data-label="Name">' + esc(loc.name) + '</td>' +
+                    '<td data-label="Type"><span class="badge badge-' + backendBadgeColor(loc.backend_type) + '">' +
+                        esc(loc.backend_type.toUpperCase()) + '</span></td>' +
+                    '<td data-label="Priority">' + loc.priority + '</td>' +
+                    '<td data-label="Default">' + (loc.is_default ? 'Yes' : '-') + '</td>' +
+                    '<td data-label=""><button class="btn btn-sm btn-outline" data-action="test-group-storage" data-id="' + loc.id + '">Test</button></td>' +
+                '</tr>';
+            }
+            html += '</tbody></table>';
+        }
+
+        html += '</div>';
+        content.innerHTML = html;
+
+        // Wire add button — navigate to storage view
+        document.getElementById('btn-add-group-storage').addEventListener('click', function() {
+            Modal.close();
+            window.location.hash = '#storage';
+        });
+
+        // Wire test buttons
+        content.querySelectorAll('[data-action="test-group-storage"]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var id = parseInt(btn.getAttribute('data-id'), 10);
+                var origText = btn.textContent;
+                btn.textContent = 'Testing...';
+                btn.disabled = true;
+
+                API.post('/api/v1/admin/storage/' + id + '/test').then(function(resp) {
+                    return resp.json().then(function(data) {
+                        btn.textContent = origText;
+                        btn.disabled = false;
+                        if (data.success) {
+                            Toast.success('Connection test passed!');
+                        } else {
+                            Toast.error('Test failed: ' + (data.error || 'Unknown error'));
+                        }
+                    });
+                }).catch(function() {
+                    btn.textContent = origText;
+                    btn.disabled = false;
+                    Toast.error('Test request failed');
+                });
+            });
+        });
+    }).catch(function() {
+        content.innerHTML = '<div class="alert alert-error">Failed to load storage locations</div>';
+    });
+}
+
+// backendBadgeColor is defined in storage.js (loaded after this file)

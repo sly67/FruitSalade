@@ -27,7 +27,7 @@ import (
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metrics"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/quota"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/sharing"
-	s3storage "github.com/fruitsalade/fruitsalade/phase2/internal/storage/s3"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/storage"
 	davpkg "github.com/fruitsalade/fruitsalade/phase2/internal/webdav"
 	"github.com/fruitsalade/fruitsalade/phase2/ui"
 	"github.com/fruitsalade/fruitsalade/phase2/webapp"
@@ -37,7 +37,8 @@ import (
 
 // Server is the Phase 2 HTTP server.
 type Server struct {
-	storage       *s3storage.Storage
+	metadata      *postgres.Store
+	storageRouter *storage.Router
 	auth          *auth.Auth
 	tree          *models.FileNode
 	maxUploadSize int64
@@ -55,11 +56,15 @@ type Server struct {
 	// Quotas
 	quotaStore  *quota.QuotaStore
 	rateLimiter *quota.RateLimiter
+
+	// Storage admin
+	locationStore *storage.LocationStore
 }
 
 // NewServer creates a new Phase 2 server.
 func NewServer(
-	storage *s3storage.Storage,
+	metadata *postgres.Store,
+	storageRouter *storage.Router,
 	authHandler *auth.Auth,
 	maxUploadSize int64,
 	broadcaster *events.Broadcaster,
@@ -70,9 +75,11 @@ func NewServer(
 	groups *sharing.GroupStore,
 	cfg *config.Config,
 	provisioner *sharing.Provisioner,
+	locationStore *storage.LocationStore,
 ) *Server {
 	return &Server{
-		storage:       storage,
+		metadata:      metadata,
+		storageRouter: storageRouter,
 		auth:          authHandler,
 		maxUploadSize: maxUploadSize,
 		broadcaster:   broadcaster,
@@ -83,13 +90,14 @@ func NewServer(
 		quotaStore:    quotaStore,
 		rateLimiter:   rateLimiter,
 		config:        cfg,
+		locationStore: locationStore,
 	}
 }
 
 // Init initializes the server by building the metadata tree.
 func (s *Server) Init(ctx context.Context) error {
 	logging.Info("building metadata tree from database...")
-	tree, err := s.storage.BuildTree(ctx)
+	tree, err := s.metadata.BuildTree(ctx)
 	if err != nil {
 		return fmt.Errorf("build tree: %w", err)
 	}
@@ -102,7 +110,7 @@ func (s *Server) Init(ctx context.Context) error {
 
 // RefreshTree rebuilds the metadata tree.
 func (s *Server) RefreshTree(ctx context.Context) error {
-	tree, err := s.storage.BuildTree(ctx)
+	tree, err := s.metadata.BuildTree(ctx)
 	if err != nil {
 		return err
 	}
@@ -148,7 +156,7 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	// WebDAV endpoint (has its own auth middleware)
-	davHandler := davpkg.NewHandler(s.storage, s.auth)
+	davHandler := davpkg.NewHandler(s.metadata, s.storageRouter, s.auth)
 	mux.Handle("/webdav/", davHandler)
 	mux.Handle("/webdav", davHandler)
 
@@ -212,6 +220,16 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/admin/groups/{groupID}/permissions", s.handleListGroupPermissions)
 	protected.HandleFunc("PUT /api/v1/admin/groups/{groupID}/permissions/{path...}", s.handleSetGroupPermission)
 	protected.HandleFunc("DELETE /api/v1/admin/groups/{groupID}/permissions/{path...}", s.handleDeleteGroupPermission)
+
+	// Admin storage endpoints
+	protected.HandleFunc("GET /api/v1/admin/storage", s.handleListStorageLocations)
+	protected.HandleFunc("GET /api/v1/admin/storage/{id}", s.handleGetStorageLocation)
+	protected.HandleFunc("POST /api/v1/admin/storage", s.handleCreateStorageLocation)
+	protected.HandleFunc("PUT /api/v1/admin/storage/{id}", s.handleUpdateStorageLocation)
+	protected.HandleFunc("DELETE /api/v1/admin/storage/{id}", s.handleDeleteStorageLocation)
+	protected.HandleFunc("POST /api/v1/admin/storage/{id}/test", s.handleTestStorageLocation)
+	protected.HandleFunc("POST /api/v1/admin/storage/{id}/default", s.handleSetDefaultStorage)
+	protected.HandleFunc("GET /api/v1/admin/storage/{id}/stats", s.handleStorageStats)
 
 	// File properties endpoint
 	protected.HandleFunc("GET /api/v1/properties/{path...}", s.handleFileProperties)
@@ -512,7 +530,7 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 
 	// Look up file - try by path first, then by ID (for FUSE client compat)
 	fullPath := "/" + pathParam
-	fileRow, _ := s.storage.Metadata().GetFileRow(r.Context(), fullPath)
+	fileRow, _ := s.metadata.GetFileRow(r.Context(), fullPath)
 
 	// Check read permission
 	claims := auth.GetClaims(r.Context())
@@ -524,11 +542,15 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var totalSize int64
-	var lookupID string
+	var lookupKey string
+	var storageLocID *int
+	var groupID *int
 
 	if fileRow != nil {
 		totalSize = fileRow.Size
-		lookupID = fileRow.ID
+		lookupKey = fileRow.S3Key
+		storageLocID = fileRow.StorageLocID
+		groupID = fileRow.GroupID
 		// Set version/ETag headers
 		if fileRow.Hash != "" {
 			w.Header().Set("ETag", `"`+fileRow.Hash+`"`)
@@ -538,20 +560,30 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Fall back to ID-based lookup (FUSE client passes file ID)
-		lookupID = pathParam
+		lookupID := pathParam
 		var err error
-		totalSize, err = s.storage.GetContentSize(r.Context(), lookupID)
+		totalSize, err = s.metadata.GetFileSize(r.Context(), lookupID)
 		if err != nil {
 			s.sendError(w, http.StatusNotFound, "file not found: "+pathParam)
 			return
 		}
+		// Need to get the s3 key and storage location
+		s3Key, _ := s.metadata.GetS3Key(r.Context(), lookupID)
+		lookupKey = s3Key
 	}
 
 	// Parse Range header
 	offset, length, hasRange := parseRangeHeader(r.Header.Get("Range"), totalSize)
 
-	// Get content from S3
-	reader, _, err := s.storage.GetContent(r.Context(), lookupID, offset, length)
+	// Resolve backend
+	backend, _, err := s.storageRouter.ResolveForFile(r.Context(), storageLocID, groupID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "no storage backend: "+err.Error())
+		return
+	}
+
+	// Get content from backend
+	reader, _, err := backend.GetObject(r.Context(), lookupKey, offset, length)
 	if err != nil {
 		metrics.RecordContentDownload(0, false)
 		s.sendError(w, http.StatusInternalServerError, err.Error())
@@ -656,7 +688,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	// Check if file already exists (for versioning and conflict detection)
 	newVersion := 1
-	existingRow, _ := s.storage.Metadata().GetFileRow(r.Context(), path)
+	existingRow, _ := s.metadata.GetFileRow(r.Context(), path)
 
 	// Conflict detection: check X-Expected-Version and If-Match headers
 	if existingRow != nil && !existingRow.IsDir {
@@ -694,21 +726,35 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	if existingRow != nil && !existingRow.IsDir && existingRow.Size > 0 {
 		// Save current state as a version before overwriting
-		if err := s.storage.Metadata().SaveVersion(r.Context(), path); err != nil {
+		if err := s.metadata.SaveVersion(r.Context(), path); err != nil {
 			logging.Warn("failed to save version", zap.String("path", path), zap.Error(err))
 		}
 
-		// Copy current S3 content to version backup key
-		versionKey := fmt.Sprintf("_versions/%s/%d", s3Key, existingRow.Version)
-		if err := s.storage.CopyObject(r.Context(), existingRow.S3Key, versionKey); err != nil {
-			logging.Warn("failed to backup version content", zap.String("path", path), zap.Error(err))
+		// Resolve existing file's backend for version backup
+		existBackend, _, _ := s.storageRouter.ResolveForFile(r.Context(), existingRow.StorageLocID, existingRow.GroupID)
+		if existBackend != nil {
+			versionKey := fmt.Sprintf("_versions/%s/%d", s3Key, existingRow.Version)
+			if err := existBackend.CopyObject(r.Context(), existingRow.S3Key, versionKey); err != nil {
+				logging.Warn("failed to backup version content", zap.String("path", path), zap.Error(err))
+			}
 		}
 
 		newVersion = existingRow.Version + 1
 	}
 
-	// Upload to S3
-	if err := s.storage.PutObject(r.Context(), s3Key, strings.NewReader(string(content)), int64(len(content))); err != nil {
+	// Resolve backend for upload
+	var groupID *int
+	if existingRow != nil {
+		groupID = existingRow.GroupID
+	}
+	backend, loc, err := s.storageRouter.ResolveForUpload(r.Context(), path, groupID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "no storage backend: "+err.Error())
+		return
+	}
+
+	// Upload to backend
+	if err := backend.PutObject(r.Context(), s3Key, strings.NewReader(string(content)), int64(len(content))); err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to upload: "+err.Error())
 		return
 	}
@@ -724,17 +770,19 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		parentPath = "/"
 	}
 
+	storageLocID := &loc.ID
 	fileRow := &postgres.FileRow{
-		ID:         fileID(path),
-		Name:       filepath.Base(path),
-		Path:       path,
-		ParentPath: parentPath,
-		Size:       int64(len(content)),
-		ModTime:    time.Now(),
-		IsDir:      false,
-		Hash:       hashStr,
-		S3Key:      s3Key,
-		Version:    newVersion,
+		ID:           fileID(path),
+		Name:         filepath.Base(path),
+		Path:         path,
+		ParentPath:   parentPath,
+		Size:         int64(len(content)),
+		ModTime:      time.Now(),
+		IsDir:        false,
+		Hash:         hashStr,
+		S3Key:        s3Key,
+		Version:      newVersion,
+		StorageLocID: storageLocID,
 	}
 
 	// Set owner on first upload
@@ -743,7 +791,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		fileRow.OwnerID = &ownerID
 	}
 
-	if err := s.storage.Metadata().UpsertFile(r.Context(), fileRow); err != nil {
+	if err := s.metadata.UpsertFile(r.Context(), fileRow); err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to save metadata: "+err.Error())
 		return
 	}
@@ -823,7 +871,7 @@ func (s *Server) handleCreateOrUpdate(w http.ResponseWriter, r *http.Request) {
 			fileRow.OwnerID = &ownerID
 		}
 
-		if err := s.storage.Metadata().UpsertFile(r.Context(), fileRow); err != nil {
+		if err := s.metadata.UpsertFile(r.Context(), fileRow); err != nil {
 			s.sendError(w, http.StatusInternalServerError, "failed to create directory: "+err.Error())
 			return
 		}
@@ -869,7 +917,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if path exists
-	fileRow, err := s.storage.Metadata().GetFileRow(r.Context(), path)
+	fileRow, err := s.metadata.GetFileRow(r.Context(), path)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -880,19 +928,23 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fileRow.IsDir {
-		// Delete directory and all children from S3
-		rows, err := s.storage.Metadata().ListDir(r.Context(), path)
+		// Delete directory and all children from storage
+		rows, err := s.metadata.ListDir(r.Context(), path)
 		if err == nil {
 			for _, row := range rows {
 				if !row.IsDir {
 					s3Key := strings.TrimPrefix(row.Path, "/")
-					s.storage.DeleteObject(r.Context(), s3Key)
+					// Resolve backend for each file — use default as fallback
+					backend, _, _ := s.storageRouter.GetDefault()
+					if backend != nil {
+						backend.DeleteObject(r.Context(), s3Key)
+					}
 				}
 			}
 		}
 
 		// Delete from metadata (cascading delete)
-		deleted, err := s.storage.Metadata().DeleteTree(r.Context(), path)
+		deleted, err := s.metadata.DeleteTree(r.Context(), path)
 		if err != nil {
 			s.sendError(w, http.StatusInternalServerError, "failed to delete: "+err.Error())
 			return
@@ -910,14 +962,17 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 			"deleted": deleted,
 		})
 	} else {
-		// Delete file from S3
+		// Delete file from storage
 		s3Key := strings.TrimPrefix(path, "/")
-		if err := s.storage.DeleteObject(r.Context(), s3Key); err != nil {
-			logging.Warn("failed to delete from S3", zap.String("key", s3Key), zap.Error(err))
+		backend, _, _ := s.storageRouter.ResolveForFile(r.Context(), fileRow.StorageLocID, fileRow.GroupID)
+		if backend != nil {
+			if err := backend.DeleteObject(r.Context(), s3Key); err != nil {
+				logging.Warn("failed to delete from storage", zap.String("key", s3Key), zap.Error(err))
+			}
 		}
 
 		// Delete from metadata
-		if err := s.storage.Metadata().DeleteFile(r.Context(), path); err != nil {
+		if err := s.metadata.DeleteFile(r.Context(), path); err != nil {
 			s.sendError(w, http.StatusInternalServerError, "failed to delete: "+err.Error())
 			return
 		}
@@ -939,7 +994,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 // ─── Versions ───────────────────────────────────────────────────────────────
 
 func (s *Server) handleVersionedFiles(w http.ResponseWriter, r *http.Request) {
-	files, err := s.storage.Metadata().ListVersionedFiles(r.Context())
+	files, err := s.metadata.ListVersionedFiles(r.Context())
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to list versioned files: "+err.Error())
 		return
@@ -963,7 +1018,7 @@ func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	versions, currentVersion, err := s.storage.Metadata().ListVersions(r.Context(), path)
+	versions, currentVersion, err := s.metadata.ListVersions(r.Context(), path)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, "file not found or no versions: "+err.Error())
 		return
@@ -993,14 +1048,21 @@ func (s *Server) handleVersionContent(w http.ResponseWriter, r *http.Request, pa
 		return
 	}
 
-	vRecord, err := s.storage.Metadata().GetVersion(r.Context(), path, version)
+	vRecord, err := s.metadata.GetVersion(r.Context(), path, version)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, "version not found: "+err.Error())
 		return
 	}
 
+	// Resolve backend from version record
+	backend, _, err := s.storageRouter.ResolveForFile(r.Context(), vRecord.StorageLocID, nil)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "no storage backend: "+err.Error())
+		return
+	}
+
 	versionS3Key := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), version)
-	reader, size, err := s.storage.GetContentByS3Key(r.Context(), versionS3Key)
+	reader, size, err := backend.GetObject(r.Context(), versionS3Key, 0, 0)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to retrieve version content: "+err.Error())
 		return
@@ -1036,30 +1098,37 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	currentRow, err := s.storage.Metadata().GetFileRow(r.Context(), path)
+	currentRow, err := s.metadata.GetFileRow(r.Context(), path)
 	if err != nil || currentRow == nil {
 		s.sendError(w, http.StatusNotFound, "file not found: "+path)
 		return
 	}
 
+	// Resolve backend for this file
+	backend, _, err := s.storageRouter.ResolveForFile(r.Context(), currentRow.StorageLocID, currentRow.GroupID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "no storage backend: "+err.Error())
+		return
+	}
+
 	// Save current state as a version before rollback
-	if err := s.storage.Metadata().SaveVersion(r.Context(), path); err != nil {
+	if err := s.metadata.SaveVersion(r.Context(), path); err != nil {
 		logging.Warn("failed to save pre-rollback version", zap.Error(err))
 	}
 	versionKey := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), currentRow.Version)
-	if err := s.storage.CopyObject(r.Context(), currentRow.S3Key, versionKey); err != nil {
+	if err := backend.CopyObject(r.Context(), currentRow.S3Key, versionKey); err != nil {
 		logging.Warn("failed to backup pre-rollback content", zap.Error(err))
 	}
 
 	// Copy version content back to current S3 key
 	srcKey := fmt.Sprintf("_versions/%s/%d", strings.TrimPrefix(path, "/"), req.Version)
-	if err := s.storage.CopyObject(r.Context(), srcKey, currentRow.S3Key); err != nil {
+	if err := backend.CopyObject(r.Context(), srcKey, currentRow.S3Key); err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to restore content: "+err.Error())
 		return
 	}
 
 	newVersion := currentRow.Version + 1
-	if err := s.storage.Metadata().RestoreVersion(r.Context(), path, req.Version, newVersion, currentRow.S3Key); err != nil {
+	if err := s.metadata.RestoreVersion(r.Context(), path, req.Version, newVersion, currentRow.S3Key); err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to restore metadata: "+err.Error())
 		return
 	}
@@ -1304,14 +1373,21 @@ func (s *Server) handleShareDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get file metadata
-	fileRow, err := s.storage.Metadata().GetFileRow(r.Context(), link.Path)
+	fileRow, err := s.metadata.GetFileRow(r.Context(), link.Path)
 	if err != nil || fileRow == nil {
 		s.sendError(w, http.StatusNotFound, "shared file not found")
 		return
 	}
 
-	// Get content from S3
-	reader, size, err := s.storage.GetContent(r.Context(), fileRow.ID, 0, fileRow.Size)
+	// Resolve backend for this file
+	backend, _, err := s.storageRouter.ResolveForFile(r.Context(), fileRow.StorageLocID, fileRow.GroupID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "no storage backend: "+err.Error())
+		return
+	}
+
+	// Get content
+	reader, size, err := backend.GetObject(r.Context(), fileRow.S3Key, 0, 0)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to retrieve content: "+err.Error())
 		return
@@ -1665,7 +1741,7 @@ func (s *Server) handleFileProperties(w http.ResponseWriter, r *http.Request) {
 
 	// Get version count
 	if !node.IsDir {
-		if versions, _, err := s.storage.Metadata().ListVersions(r.Context(), path); err == nil {
+		if versions, _, err := s.metadata.ListVersions(r.Context(), path); err == nil {
 			resp.VersionCount = len(versions)
 		} else {
 			logging.Debug("properties: failed to list versions", zap.String("path", path), zap.Error(err))
@@ -1688,7 +1764,7 @@ func (s *Server) ensureParentDirs(ctx context.Context, path string) error {
 	for i := 0; i < len(parts)-1; i++ {
 		currentPath += "/" + parts[i]
 
-		exists, err := s.storage.Metadata().PathExists(ctx, currentPath)
+		exists, err := s.metadata.PathExists(ctx, currentPath)
 		if err != nil {
 			return err
 		}
@@ -1710,7 +1786,7 @@ func (s *Server) ensureParentDirs(ctx context.Context, path string) error {
 			ModTime:    time.Now(),
 		}
 
-		if err := s.storage.Metadata().UpsertFile(ctx, fileRow); err != nil {
+		if err := s.metadata.UpsertFile(ctx, fileRow); err != nil {
 			return err
 		}
 	}

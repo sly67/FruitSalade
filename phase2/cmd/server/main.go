@@ -7,11 +7,13 @@
 // - SSE real-time sync
 // - File sharing (ACLs + share links)
 // - Rate limiting & user quotas
+// - Multi-backend storage (S3, local, SMB)
 package main
 
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,6 +29,8 @@ import (
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metrics"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/quota"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/sharing"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/storage"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/storage/local"
 	s3storage "github.com/fruitsalade/fruitsalade/phase2/internal/storage/s3"
 	"go.uber.org/zap"
 )
@@ -72,23 +76,9 @@ func main() {
 		}
 	}
 
-	// Initialize S3 storage
-	logging.Info("connecting to S3...", zap.String("endpoint", cfg.S3Endpoint))
-	s3Cfg := s3storage.Config{
-		Endpoint:  cfg.S3Endpoint,
-		Bucket:    cfg.S3Bucket,
-		AccessKey: cfg.S3AccessKey,
-		SecretKey: cfg.S3SecretKey,
-		Region:    cfg.S3Region,
-		UseSSL:    cfg.S3UseSSL,
-	}
-	storage, err := s3storage.New(ctx, s3Cfg, metaStore)
-	if err != nil {
-		logging.Fatal("S3 storage init failed", zap.Error(err))
-	}
-
 	// Initialize auth
-	authHandler := auth.New(metaStore.DB(), cfg.JWTSecret)
+	db := metaStore.DB()
+	authHandler := auth.New(db, cfg.JWTSecret)
 	if err := authHandler.EnsureDefaultAdmin(ctx); err != nil {
 		logging.Error("failed to ensure default admin", zap.Error(err))
 	}
@@ -115,7 +105,6 @@ func main() {
 	logging.Info("SSE broadcaster initialized")
 
 	// Initialize sharing stores
-	db := metaStore.DB()
 	permissionStore := sharing.NewPermissionStore(db)
 	shareLinkStore := sharing.NewShareLinkStore(db)
 	groupStore := sharing.NewGroupStore(db)
@@ -131,12 +120,63 @@ func main() {
 	provisioner := sharing.NewProvisioner(groupStore, metaStore, permissionStore)
 	logging.Info("provisioner initialized")
 
+	// Initialize storage location store and router
+	locationStore := storage.NewLocationStore(db)
+
+	storageRouter, err := storage.NewRouter(ctx, locationStore, groupStore)
+	if err != nil {
+		logging.Fatal("storage router init failed", zap.Error(err))
+	}
+	defer storageRouter.Close()
+
+	// Auto-create default storage location on first run (if no locations exist)
+	if storageRouter.DefaultLocation() == nil {
+		var locName, backendType string
+		var backendConfig json.RawMessage
+
+		if cfg.StorageBackend == "s3" {
+			locName = "Default S3"
+			backendType = "s3"
+			backendConfig, _ = json.Marshal(s3storage.BackendConfig{
+				Endpoint:  cfg.S3Endpoint,
+				Bucket:    cfg.S3Bucket,
+				AccessKey: cfg.S3AccessKey,
+				SecretKey: cfg.S3SecretKey,
+				Region:    cfg.S3Region,
+				UseSSL:    cfg.S3UseSSL,
+			})
+		} else {
+			locName = "Default Local"
+			backendType = "local"
+			backendConfig, _ = json.Marshal(local.Config{
+				RootPath:   cfg.LocalStoragePath,
+				CreateDirs: true,
+			})
+		}
+
+		_, err := locationStore.Create(ctx, &storage.LocationRow{
+			Name:        locName,
+			BackendType: backendType,
+			Config:      backendConfig,
+			IsDefault:   true,
+		})
+		if err != nil {
+			logging.Fatal("failed to create default storage location", zap.Error(err))
+		}
+		if err := storageRouter.Reload(ctx); err != nil {
+			logging.Fatal("failed to reload storage router", zap.Error(err))
+		}
+		logging.Info("auto-created default storage location",
+			zap.String("backend", backendType),
+			zap.String("name", locName))
+	}
+
 	// Create API server
 	srv := api.NewServer(
-		storage, authHandler, cfg.MaxUploadSize,
+		metaStore, storageRouter, authHandler, cfg.MaxUploadSize,
 		broadcaster, permissionStore, shareLinkStore,
 		quotaStore, rateLimiter, groupStore, cfg,
-		provisioner,
+		provisioner, locationStore,
 	)
 	if err := srv.Init(ctx); err != nil {
 		logging.Fatal("server init failed", zap.Error(err))

@@ -42,6 +42,10 @@ type Config struct {
 	OIDCAdminClaim   string
 	OIDCAdminValue   string
 
+	// Storage backend ("local" or "s3", default: "local")
+	StorageBackend   string
+	LocalStoragePath string
+
 	// Uploads
 	MaxUploadSize int64
 
@@ -73,6 +77,8 @@ func Load() (*Config, error) {
 		OIDCClientSecret: envOr("OIDC_CLIENT_SECRET", ""),
 		OIDCAdminClaim:   envOr("OIDC_ADMIN_CLAIM", "is_admin"),
 		OIDCAdminValue:   envOr("OIDC_ADMIN_VALUE", "true"),
+		StorageBackend:       envOr("STORAGE_BACKEND", "local"),
+		LocalStoragePath:     envOr("LOCAL_STORAGE_PATH", "/data/storage"),
 		MaxUploadSize:        envInt64("MAX_UPLOAD_SIZE", 100*1024*1024), // 100MB default
 		DefaultMaxStorage:    envInt64("DEFAULT_MAX_STORAGE", 0),        // 0 = unlimited
 		DefaultMaxBandwidth:  envInt64("DEFAULT_MAX_BANDWIDTH", 0),      // 0 = unlimited

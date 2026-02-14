@@ -1,0 +1,69 @@
+# Single-container Dockerfile: PostgreSQL 16 + FruitSalade server
+#
+# Bundles everything in one Alpine container with local filesystem storage.
+# No external dependencies (no MinIO/S3 required).
+#
+# Build:  docker build -t fruitsalade:single -f phase2/docker/Dockerfile.single .
+# Run:    docker run -p 8080:8080 -p 9090:9090 -e JWT_SECRET=changeme fruitsalade:single
+
+# =============================================================================
+# Builder stage
+# =============================================================================
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /build
+
+# Copy workspace and source
+COPY go.work ./
+COPY shared/ ./shared/
+COPY phase1/ ./phase1/
+COPY phase2/ ./phase2/
+
+# Build Phase 2 server and seed tool
+WORKDIR /build/phase2
+ENV GOWORK=off
+RUN go build -o /bin/server ./cmd/server
+RUN go build -o /bin/seed-tool ./cmd/seed-tool
+
+# =============================================================================
+# Runtime stage
+# =============================================================================
+FROM alpine:3.19
+
+RUN apk add --no-cache \
+    postgresql16 \
+    postgresql16-contrib \
+    su-exec \
+    ca-certificates \
+    tzdata
+
+WORKDIR /app
+
+# Copy binaries
+COPY --from=builder /bin/server /app/server
+COPY --from=builder /bin/seed-tool /app/seed-tool
+
+# Merge Phase 1 base migrations + Phase 2 migrations
+COPY phase1/migrations/ /app/migrations/
+COPY phase2/migrations/ /app/migrations/
+
+# Optional test data for seeding
+COPY phase1/testdata/ /app/testdata/
+
+# Prepare directories
+RUN mkdir -p /data/postgres /data/storage /run/postgresql && \
+    chown -R postgres:postgres /data/postgres /run/postgresql
+
+# Entrypoint script
+COPY phase2/docker/entrypoint-single.sh /app/entrypoint-single.sh
+RUN chmod +x /app/entrypoint-single.sh
+
+EXPOSE 8080 9090
+VOLUME ["/data/postgres", "/data/storage"]
+
+HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=5 \
+    CMD wget -q --spider http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["/app/entrypoint-single.sh"]

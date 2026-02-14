@@ -6,13 +6,14 @@ import (
 	"golang.org/x/net/webdav"
 
 	"github.com/fruitsalade/fruitsalade/phase2/internal/auth"
-	s3storage "github.com/fruitsalade/fruitsalade/phase2/internal/storage/s3"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/metadata/postgres"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/storage"
 )
 
 // NewHandler creates a WebDAV HTTP handler with authentication.
-func NewHandler(storage *s3storage.Storage, authHandler *auth.Auth) http.Handler {
+func NewHandler(metadata *postgres.Store, storageRouter *storage.Router, authHandler *auth.Auth) http.Handler {
 	davHandler := &webdav.Handler{
-		FileSystem: &FruitFS{storage: storage},
+		FileSystem: &FruitFS{metadata: metadata, storageRouter: storageRouter},
 		LockSystem: webdav.NewMemLS(),
 		Prefix:     "/webdav",
 	}

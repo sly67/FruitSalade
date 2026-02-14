@@ -17,14 +17,11 @@ COPY shared/ ./shared/
 COPY phase1/ ./phase1/
 COPY phase2/ ./phase2/
 
-# Build Phase 2 server and FUSE client
+# Build Phase 2 server, FUSE client, and seed tool
 WORKDIR /build/phase2
 ENV GOWORK=off
 RUN go build -o /bin/server ./cmd/server
 RUN go build -o /bin/fuse-client ./cmd/fuse-client
-
-# Build Phase 1 seed tool (reuse for seeding test data)
-WORKDIR /build/phase1
 RUN go build -o /bin/seed-tool ./cmd/seed-tool
 
 # =============================================================================
@@ -49,7 +46,7 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=5 \
 ENTRYPOINT ["/app/server"]
 
 # =============================================================================
-# Seed target (reuses Phase 1 seed tool)
+# Seed target (Phase 2 backend-agnostic seed tool)
 # =============================================================================
 FROM alpine:3.19 AS seed
 
@@ -59,6 +56,7 @@ WORKDIR /app
 
 COPY --from=builder /bin/seed-tool /app/seed-tool
 COPY phase1/migrations/ /app/migrations/
+COPY phase2/migrations/ /app/migrations/
 COPY phase1/testdata/ /testdata/
 
 ENTRYPOINT ["/app/seed-tool"]

@@ -26,11 +26,13 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/fruitsalade/fruitsalade/phase2/internal/auth"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/config"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/events"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/logging"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/metadata/postgres"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/quota"
 	"github.com/fruitsalade/fruitsalade/phase2/internal/sharing"
+	"github.com/fruitsalade/fruitsalade/phase2/internal/storage"
 	s3storage "github.com/fruitsalade/fruitsalade/phase2/internal/storage/s3"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/protocol"
 )
@@ -70,6 +72,7 @@ func TestMain(m *testing.M) {
 	testDB = db
 
 	// Clean and set up schema
+	db.ExecContext(ctx, "DROP TABLE IF EXISTS storage_locations CASCADE")
 	db.ExecContext(ctx, "DROP TABLE IF EXISTS group_permissions CASCADE")
 	db.ExecContext(ctx, "DROP TABLE IF EXISTS group_members CASCADE")
 	db.ExecContext(ctx, "DROP TABLE IF EXISTS groups CASCADE")
@@ -100,21 +103,6 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	// Connect to S3/MinIO
-	s3Cfg := s3storage.Config{
-		Endpoint:  s3Endpoint,
-		Bucket:    "fruitsalade-test",
-		AccessKey: "minioadmin",
-		SecretKey: "minioadmin",
-		Region:    "us-east-1",
-		UseSSL:    false,
-	}
-	storage, err := s3storage.New(ctx, s3Cfg, metaStore)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "SKIP: S3 storage init failed: %v\n", err)
-		os.Exit(0)
-	}
-
 	// Create root dir
 	rootRow := &postgres.FileRow{
 		ID:         "root",
@@ -140,11 +128,45 @@ func TestMain(m *testing.M) {
 	groupStore := sharing.NewGroupStore(db)
 	permissionStore.SetGroupStore(groupStore)
 	provisioner := sharing.NewProvisioner(groupStore, metaStore, permissionStore)
+
+	// Initialize storage router with default S3 location
+	locationStore := storage.NewLocationStore(db)
+	s3Config, _ := json.Marshal(s3storage.BackendConfig{
+		Endpoint:  s3Endpoint,
+		Bucket:    "fruitsalade-test",
+		AccessKey: "minioadmin",
+		SecretKey: "minioadmin",
+		Region:    "us-east-1",
+		UseSSL:    false,
+	})
+	// Clean up any existing storage locations
+	db.ExecContext(ctx, "DELETE FROM storage_locations")
+	_, err = locationStore.Create(ctx, &storage.LocationRow{
+		Name:        "Test S3",
+		BackendType: "s3",
+		Config:      s3Config,
+		IsDefault:   true,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: failed to create default storage location: %v\n", err)
+		os.Exit(0)
+	}
+
+	storageRouter, err := storage.NewRouter(ctx, locationStore, groupStore)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: storage router init failed: %v\n", err)
+		os.Exit(0)
+	}
+
+	testCfg := &config.Config{
+		MaxUploadSize: 10 * 1024 * 1024,
+	}
+
 	srv := NewServer(
-		storage, authHandler, 10*1024*1024,
+		metaStore, storageRouter, authHandler, 10*1024*1024,
 		broadcaster, permissionStore, shareLinkStore,
-		quotaStore, rateLimiter, groupStore, nil,
-		provisioner,
+		quotaStore, rateLimiter, groupStore, testCfg,
+		provisioner, locationStore,
 	)
 	if err := srv.Init(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "SKIP: server init failed: %v\n", err)

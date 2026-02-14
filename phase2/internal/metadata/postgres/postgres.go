@@ -25,19 +25,20 @@ type Store struct {
 
 // FileRow maps to the files table.
 type FileRow struct {
-	ID         string
-	Name       string
-	Path       string
-	ParentPath string
-	Size       int64
-	ModTime    time.Time
-	IsDir      bool
-	Hash       string
-	S3Key      string
-	Version    int    // Phase 2: versioning support
-	OwnerID    *int   // Phase 2: file ownership
-	Visibility string // "public", "group", "private"
-	GroupID    *int
+	ID           string
+	Name         string
+	Path         string
+	ParentPath   string
+	Size         int64
+	ModTime      time.Time
+	IsDir        bool
+	Hash         string
+	S3Key        string
+	Version      int    // Phase 2: versioning support
+	OwnerID      *int   // Phase 2: file ownership
+	Visibility   string // "public", "group", "private"
+	GroupID      *int
+	StorageLocID *int // Storage location ID (NULL = default)
 }
 
 // New creates a new PostgreSQL metadata store.
@@ -104,7 +105,7 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 	}()
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id
+		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id, storage_location_id
 		 FROM files ORDER BY path`)
 	if err != nil {
 		return nil, fmt.Errorf("query files: %w", err)
@@ -117,10 +118,10 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 
 	for rows.Next() {
 		var r FileRow
-		var ownerID, groupID sql.NullInt64
+		var ownerID, groupID, storageLocID sql.NullInt64
 		var visibility sql.NullString
 		if err := rows.Scan(&r.ID, &r.Name, &r.Path, &r.ParentPath,
-			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID, &visibility, &groupID); err != nil {
+			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID, &visibility, &groupID, &storageLocID); err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
 		if ownerID.Valid {
@@ -135,6 +136,10 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 		if groupID.Valid {
 			gid := int(groupID.Int64)
 			r.GroupID = &gid
+		}
+		if storageLocID.Valid {
+			slid := int(storageLocID.Int64)
+			r.StorageLocID = &slid
 		}
 		allRows = append(allRows, r)
 		nodeMap[r.Path] = rowToNode(&r)
@@ -209,13 +214,13 @@ func (s *Store) GetFileRow(ctx context.Context, path string) (*FileRow, error) {
 
 	path = normalizePath(path)
 	var r FileRow
-	var ownerID, groupID sql.NullInt64
+	var ownerID, groupID, storageLocID sql.NullInt64
 	var visibility sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id
+		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id, storage_location_id
 		 FROM files WHERE path = $1`, path).
 		Scan(&r.ID, &r.Name, &r.Path, &r.ParentPath,
-			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID, &visibility, &groupID)
+			&r.Size, &r.ModTime, &r.IsDir, &r.Hash, &r.S3Key, &r.Version, &ownerID, &visibility, &groupID, &storageLocID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -234,6 +239,10 @@ func (s *Store) GetFileRow(ctx context.Context, path string) (*FileRow, error) {
 	if groupID.Valid {
 		gid := int(groupID.Int64)
 		r.GroupID = &gid
+	}
+	if storageLocID.Valid {
+		slid := int(storageLocID.Int64)
+		r.StorageLocID = &slid
 	}
 	return &r, nil
 }
@@ -305,8 +314,8 @@ func (s *Store) UpsertFile(ctx context.Context, f *FileRow) error {
 	defer func() { metrics.RecordDBQuery("upsert_file", time.Since(start)) }()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id, storage_location_id, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
 		 ON CONFLICT (path) DO UPDATE SET
 			name = EXCLUDED.name,
 			size = EXCLUDED.size,
@@ -317,8 +326,9 @@ func (s *Store) UpsertFile(ctx context.Context, f *FileRow) error {
 			owner_id = COALESCE(files.owner_id, EXCLUDED.owner_id),
 			visibility = COALESCE(NULLIF(EXCLUDED.visibility, ''), files.visibility),
 			group_id = COALESCE(EXCLUDED.group_id, files.group_id),
+			storage_location_id = COALESCE(EXCLUDED.storage_location_id, files.storage_location_id),
 			updated_at = NOW()`,
-		f.ID, f.Name, f.Path, f.ParentPath, f.Size, f.ModTime, f.IsDir, f.Hash, f.S3Key, f.Version, f.OwnerID, f.Visibility, f.GroupID)
+		f.ID, f.Name, f.Path, f.ParentPath, f.Size, f.ModTime, f.IsDir, f.Hash, f.S3Key, f.Version, f.OwnerID, f.Visibility, f.GroupID, f.StorageLocID)
 	if err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}
@@ -404,13 +414,14 @@ func rowToNode(r *FileRow) *models.FileNode {
 
 // VersionRecord holds a file version from the file_versions table.
 type VersionRecord struct {
-	FileID    string
-	Path      string
-	Version   int
-	Size      int64
-	Hash      string
-	S3Key     string
-	CreatedAt time.Time
+	FileID       string
+	Path         string
+	Version      int
+	Size         int64
+	Hash         string
+	S3Key        string
+	StorageLocID *int
+	CreatedAt    time.Time
 }
 
 // SaveVersion saves the current file state as a version record.
@@ -420,8 +431,8 @@ func (s *Store) SaveVersion(ctx context.Context, path string) error {
 
 	path = normalizePath(path)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO file_versions (file_id, path, version, size, hash, s3_key)
-		 SELECT id, path, version, size, hash, s3_key FROM files WHERE path = $1
+		`INSERT INTO file_versions (file_id, path, version, size, hash, s3_key, storage_location_id)
+		 SELECT id, path, version, size, hash, s3_key, storage_location_id FROM files WHERE path = $1
 		 ON CONFLICT (path, version) DO NOTHING`,
 		path)
 	if err != nil {
@@ -448,7 +459,7 @@ func (s *Store) ListVersions(ctx context.Context, path string) ([]VersionRecord,
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT file_id, path, version, size, hash, s3_key, created_at
+		`SELECT file_id, path, version, size, hash, s3_key, storage_location_id, created_at
 		 FROM file_versions WHERE path = $1 ORDER BY version DESC`, path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query versions: %w", err)
@@ -458,8 +469,13 @@ func (s *Store) ListVersions(ctx context.Context, path string) ([]VersionRecord,
 	var versions []VersionRecord
 	for rows.Next() {
 		var v VersionRecord
-		if err := rows.Scan(&v.FileID, &v.Path, &v.Version, &v.Size, &v.Hash, &v.S3Key, &v.CreatedAt); err != nil {
+		var slid sql.NullInt64
+		if err := rows.Scan(&v.FileID, &v.Path, &v.Version, &v.Size, &v.Hash, &v.S3Key, &slid, &v.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan version: %w", err)
+		}
+		if slid.Valid {
+			id := int(slid.Int64)
+			v.StorageLocID = &id
 		}
 		versions = append(versions, v)
 	}
@@ -474,12 +490,17 @@ func (s *Store) GetVersion(ctx context.Context, path string, version int) (*Vers
 
 	path = normalizePath(path)
 	var v VersionRecord
+	var slid sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT file_id, path, version, size, hash, s3_key, created_at
+		`SELECT file_id, path, version, size, hash, s3_key, storage_location_id, created_at
 		 FROM file_versions WHERE path = $1 AND version = $2`, path, version).
-		Scan(&v.FileID, &v.Path, &v.Version, &v.Size, &v.Hash, &v.S3Key, &v.CreatedAt)
+		Scan(&v.FileID, &v.Path, &v.Version, &v.Size, &v.Hash, &v.S3Key, &slid, &v.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get version %d for %s: %w", version, path, err)
+	}
+	if slid.Valid {
+		id := int(slid.Int64)
+		v.StorageLocID = &id
 	}
 	return &v, nil
 }

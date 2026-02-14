@@ -196,7 +196,7 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 
 	userCount, _ := s.auth.UserCount(ctx)
 	sessionCount, _ := s.auth.ActiveSessionCount(ctx)
-	fileCount, _ := s.storage.Metadata().FileCount(ctx)
+	fileCount, _ := s.metadata.FileCount(ctx)
 
 	// Total storage: sum of all file sizes
 	var totalStorage int64

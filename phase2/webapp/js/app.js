@@ -10,11 +10,12 @@
         'users':        renderUsers,
         'admin-shares': renderAdminShares,
         'groups':       renderGroups,
-        'settings':     renderSettings
+        'settings':     renderSettings,
+        'storage':      renderStorage
     };
 
     // Admin-only routes
-    var adminRoutes = ['users', 'groups', 'admin-shares', 'settings'];
+    var adminRoutes = ['users', 'groups', 'admin-shares', 'settings', 'storage'];
 
     // Mobile state
     var isMobile = false;
@@ -148,7 +149,7 @@
         }
         // Highlight More tab if current route is an admin/more route
         var moreTab = document.getElementById('tab-more');
-        var moreRoutes = ['shares', 'users', 'groups', 'admin-shares', 'settings'];
+        var moreRoutes = ['shares', 'users', 'groups', 'storage', 'admin-shares', 'settings'];
         if (moreRoutes.indexOf(route) !== -1) {
             moreTab.classList.add('active');
         } else {
@@ -178,6 +179,7 @@
         if (isAdmin()) {
             items.push({ route: 'users', icon: '&#128100;', label: 'Users' });
             items.push({ route: 'groups', icon: '&#128101;', label: 'Groups' });
+            items.push({ route: 'storage', icon: '&#128190;', label: 'Storage' });
             items.push({ route: 'admin-shares', icon: '&#128279;', label: 'Admin Shares' });
             items.push({ route: 'settings', icon: '&#9881;', label: 'Settings' });
         }
