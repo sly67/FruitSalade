@@ -1,166 +1,96 @@
-.PHONY: all phase0 phase1 phase2 clean test help
+.PHONY: all clean test help
 
 # Default target
-all: phase0
+all: server fuse
 
 #==============================================================================
-# PHASE 0 - PoC (Research & Proof of Concept)
+# BUILD
 #==============================================================================
-.PHONY: phase0 phase0-server phase0-fuse phase0-cache-cli phase0-test phase0-run-server phase0-run-fuse
+.PHONY: server fuse seed winclient windows
 
-phase0: phase0-server phase0-fuse phase0-cache-cli
+server:
+	@echo "Building Server..."
+	cd phase2 && go build -o ../bin/server ./cmd/server
 
-phase0-server:
-	@echo "Building Phase 0 Server..."
-	cd phase0 && go build -o ../bin/phase0-server ./cmd/server
+fuse:
+	@echo "Building FUSE Client..."
+	cd phase2 && go build -o ../bin/fuse-client ./cmd/fuse-client
 
-phase0-fuse:
-	@echo "Building Phase 0 FUSE Client..."
-	cd phase0 && go build -o ../bin/phase0-fuse ./cmd/fuse-client
+seed:
+	@echo "Building Seed Tool..."
+	cd phase2 && go build -o ../bin/seed-tool ./cmd/seed-tool
 
-phase0-cache-cli:
-	@echo "Building Phase 0 Cache CLI..."
-	cd phase0 && go build -o ../bin/phase0-cache-cli ./cmd/cache-cli
+winclient:
+	@echo "Building Windows Client (cgofuse, native)..."
+	cd phase2 && go build -o ../bin/winclient ./cmd/windows-client
 
-phase0-test:
-	@echo "Testing Phase 0..."
-	cd phase0 && go test ./...
-
-phase0-run-server:
-	@echo "Running Phase 0 Server on :8080..."
-	cd phase0 && go run ./cmd/server
-
-phase0-run-fuse:
-	@echo "Running Phase 0 FUSE Client..."
-	@echo "Usage: sudo ./bin/phase0-fuse -mount /mnt/fruitsalade -server http://localhost:8080"
-	cd phase0 && go run ./cmd/fuse-client
-
-#==============================================================================
-# PHASE 1 - MVP (Minimum Viable Product)
-#==============================================================================
-.PHONY: phase1 phase1-server phase1-fuse phase1-seed phase1-test phase1-docker
-.PHONY: phase1-test-env phase1-test-env-down phase1-test-env-logs phase1-exec-a phase1-exec-b
-
-phase1: phase1-server phase1-fuse
-
-phase1-server:
-	@echo "Building Phase 1 Server..."
-	cd phase1 && go build -o ../bin/phase1-server ./cmd/server
-
-phase1-fuse:
-	@echo "Building Phase 1 FUSE Client..."
-	cd phase1 && go build -o ../bin/phase1-fuse ./cmd/fuse-client
-
-phase1-seed:
-	@echo "Building Phase 1 Seed Tool..."
-	cd phase1 && go build -o ../bin/phase1-seed ./cmd/seed-tool
-
-phase1-test:
-	@echo "Testing Phase 1..."
-	cd phase1 && go test ./...
-
-phase1-docker:
-	@echo "Building Phase 1 Docker images..."
-	docker build -t fruitsalade:phase1-server --target server -f phase1/docker/Dockerfile .
-	docker build -t fruitsalade:phase1-seed --target seed -f phase1/docker/Dockerfile .
-	docker build -t fruitsalade:phase1-fuse --target fuse-client -f phase1/docker/Dockerfile .
-
-phase1-up:
-	@echo "Starting Phase 1 services..."
-	docker compose -f phase1/docker/docker-compose.yml up -d
-
-phase1-down:
-	docker compose -f phase1/docker/docker-compose.yml down
-
-phase1-test-env:
-	@echo "Starting Phase 1 test environment (postgres + minio + server + 2 clients)..."
-	docker compose -f phase1/docker/docker-compose.yml up -d --build
-
-phase1-test-env-down:
-	@echo "Stopping Phase 1 test environment and removing volumes..."
-	docker compose -f phase1/docker/docker-compose.yml down -v
-
-phase1-test-env-logs:
-	docker compose -f phase1/docker/docker-compose.yml logs -f
-
-phase1-exec-a:
-	docker compose -f phase1/docker/docker-compose.yml exec client-a sh
-
-phase1-exec-b:
-	docker compose -f phase1/docker/docker-compose.yml exec client-b sh
-
-#==============================================================================
-# PHASE 2 - Production (Full Features)
-#==============================================================================
-.PHONY: phase2 phase2-server phase2-fuse phase2-seed phase2-winclient phase2-windows phase2-test
-.PHONY: phase2-docker phase2-test-env phase2-test-env-down phase2-test-env-logs phase2-exec-a phase2-exec-b
-.PHONY: phase2-single phase2-single-up phase2-single-down phase2-single-run
-
-phase2: phase2-server phase2-fuse
-
-phase2-server:
-	@echo "Building Phase 2 Server..."
-	cd phase2 && go build -o ../bin/phase2-server ./cmd/server
-
-phase2-fuse:
-	@echo "Building Phase 2 FUSE Client..."
-	cd phase2 && go build -o ../bin/phase2-fuse ./cmd/fuse-client
-
-phase2-seed:
-	@echo "Building Phase 2 Seed Tool..."
-	cd phase2 && go build -o ../bin/phase2-seed ./cmd/seed-tool
-
-phase2-winclient:
-	@echo "Building Phase 2 Windows Client (cgofuse, native)..."
-	cd phase2 && go build -o ../bin/phase2-winclient ./cmd/windows-client
-
-phase2-windows:
-	@echo "Building Phase 2 Windows Client (cross-compile for Windows)..."
+windows:
+	@echo "Building Windows Client (cross-compile for Windows)..."
 	@echo "Requires: Windows build environment with CGO"
-	cd phase2 && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o ../bin/phase2-windows.exe ./cmd/windows-client
+	cd phase2 && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o ../bin/windows-client.exe ./cmd/windows-client
 
-phase2-test:
+#==============================================================================
+# TEST
+#==============================================================================
+.PHONY: test test-shared test-phase2
+
+test: test-shared test-phase2
+
+test-shared:
+	@echo "Testing Shared package..."
+	cd shared && go test ./...
+
+test-phase2:
 	@echo "Testing Phase 2..."
 	cd phase2 && go test ./...
 
-phase2-docker:
-	@echo "Building Phase 2 Docker images..."
-	docker build -t fruitsalade:phase2-server --target server -f phase2/docker/Dockerfile .
-	docker build -t fruitsalade:phase2-seed --target seed -f phase2/docker/Dockerfile .
-	docker build -t fruitsalade:phase2-fuse --target fuse-client -f phase2/docker/Dockerfile .
+#==============================================================================
+# DOCKER - Multi-container (S3 backend)
+#==============================================================================
+.PHONY: docker test-env test-env-down test-env-logs exec-a exec-b
 
-phase2-test-env:
-	@echo "Starting Phase 2 test environment (postgres + minio + server + 2 clients)..."
+docker:
+	@echo "Building Docker images..."
+	docker build -t fruitsalade:server --target server -f phase2/docker/Dockerfile .
+	docker build -t fruitsalade:seed --target seed -f phase2/docker/Dockerfile .
+	docker build -t fruitsalade:fuse --target fuse-client -f phase2/docker/Dockerfile .
+
+test-env:
+	@echo "Starting test environment (postgres + minio + server + 2 clients)..."
 	docker compose -f phase2/docker/docker-compose.yml up -d --build
 
-phase2-test-env-down:
-	@echo "Stopping Phase 2 test environment and removing volumes..."
+test-env-down:
+	@echo "Stopping test environment and removing volumes..."
 	docker compose -f phase2/docker/docker-compose.yml down -v
 
-phase2-test-env-logs:
+test-env-logs:
 	docker compose -f phase2/docker/docker-compose.yml logs -f
 
-phase2-exec-a:
+exec-a:
 	docker compose -f phase2/docker/docker-compose.yml exec client-a sh
 
-phase2-exec-b:
+exec-b:
 	docker compose -f phase2/docker/docker-compose.yml exec client-b sh
 
-# Single-container deployment (PostgreSQL + server, local storage)
-phase2-single:
-	@echo "Building Phase 2 single-container Docker image..."
+#==============================================================================
+# DOCKER - Single container (local storage)
+#==============================================================================
+.PHONY: single single-up single-down single-run
+
+single:
+	@echo "Building single-container Docker image..."
 	docker build -t fruitsalade:single -f phase2/docker/Dockerfile.single .
 
-phase2-single-up:
-	@echo "Starting Phase 2 single-container deployment..."
+single-up:
+	@echo "Starting single-container deployment..."
 	docker compose -f phase2/docker/docker-compose.single.yml up -d --build
 
-phase2-single-down:
-	@echo "Stopping Phase 2 single-container deployment..."
+single-down:
+	@echo "Stopping single-container deployment..."
 	docker compose -f phase2/docker/docker-compose.single.yml down
 
-phase2-single-run:
-	@echo "Running Phase 2 single container (docker run)..."
+single-run:
+	@echo "Running single container (docker run)..."
 	docker run --rm -p 8080:8080 -p 9090:9090 \
 		-e JWT_SECRET=change-me-in-production \
 		-e SEED_DATA=true \
@@ -169,41 +99,26 @@ phase2-single-run:
 		fruitsalade:single
 
 #==============================================================================
-# SHARED
-#==============================================================================
-.PHONY: shared-test
-
-shared-test:
-	@echo "Testing Shared package..."
-	cd shared && go test ./...
-
-#==============================================================================
 # UTILITIES
 #==============================================================================
-.PHONY: clean test lint fmt deps
+.PHONY: lint fmt deps
 
 clean:
 	rm -rf bin/
-	rm -rf phase0/bin phase1/bin phase2/bin
-
-test: shared-test phase0-test phase1-test phase2-test
+	rm -rf phase2/bin
 
 lint:
-	@echo "Linting all phases..."
+	@echo "Linting..."
 	cd shared && go vet ./...
-	cd phase0 && go vet ./...
-	cd phase1 && go vet ./...
 	cd phase2 && go vet ./...
 
 fmt:
-	@echo "Formatting all code..."
-	gofmt -s -w shared/ phase0/ phase1/ phase2/
+	@echo "Formatting..."
+	gofmt -s -w shared/ phase2/
 
 deps:
 	@echo "Downloading dependencies..."
 	cd shared && go mod download
-	cd phase0 && go mod download
-	cd phase1 && go mod download
 	cd phase2 && go mod download
 
 #==============================================================================
@@ -212,47 +127,35 @@ deps:
 help:
 	@echo "FruitSalade Build System"
 	@echo ""
-	@echo "Phase 0 (PoC):"
-	@echo "  make phase0            Build server + FUSE client + cache-cli"
-	@echo "  make phase0-server     Build server only"
-	@echo "  make phase0-fuse       Build FUSE client only"
-	@echo "  make phase0-cache-cli  Build cache CLI tool"
-	@echo "  make phase0-test       Run Phase 0 tests"
-	@echo "  make phase0-run-server Run server locally"
+	@echo "Build:"
+	@echo "  make server          Build server"
+	@echo "  make fuse            Build FUSE client"
+	@echo "  make seed            Build seed tool"
+	@echo "  make winclient       Build Windows client (native, cgofuse)"
+	@echo "  make windows         Cross-compile Windows client (requires CGO)"
 	@echo ""
-	@echo "Phase 1 (MVP):"
-	@echo "  make phase1              Build server + FUSE client"
-	@echo "  make phase1-seed         Build seed tool"
-	@echo "  make phase1-docker       Build all Docker images"
-	@echo "  make phase1-up           Start Docker services"
-	@echo "  make phase1-down         Stop Docker services"
-	@echo "  make phase1-test         Run Phase 1 tests"
-	@echo "  make phase1-test-env     Start full test env (build + up)"
-	@echo "  make phase1-test-env-down Stop test env + remove volumes"
-	@echo "  make phase1-test-env-logs Follow logs from test env"
-	@echo "  make phase1-exec-a       Shell into client-a"
-	@echo "  make phase1-exec-b       Shell into client-b"
+	@echo "Test:"
+	@echo "  make test            Run all tests"
+	@echo "  make test-shared     Run shared package tests"
+	@echo "  make test-phase2     Run Phase 2 tests"
 	@echo ""
-	@echo "Phase 2 (Production):"
-	@echo "  make phase2              Build server + FUSE client"
-	@echo "  make phase2-seed         Build Phase 2 seed tool"
-	@echo "  make phase2-winclient    Build Windows client (native, cgofuse)"
-	@echo "  make phase2-windows      Cross-compile Windows client (requires CGO)"
-	@echo "  make phase2-test         Run Phase 2 tests"
-	@echo "  make phase2-docker       Build all Docker images"
-	@echo "  make phase2-test-env     Start full test env (build + up)"
-	@echo "  make phase2-test-env-down Stop test env + remove volumes"
-	@echo "  make phase2-test-env-logs Follow logs from test env"
-	@echo "  make phase2-exec-a       Shell into client-a"
-	@echo "  make phase2-exec-b       Shell into client-b"
-	@echo "  make phase2-single       Build single-container Docker image"
-	@echo "  make phase2-single-up    Start single-container (compose)"
-	@echo "  make phase2-single-down  Stop single-container"
-	@echo "  make phase2-single-run   Run single container (docker run)"
+	@echo "Docker (multi-container, S3 backend):"
+	@echo "  make docker          Build all Docker images"
+	@echo "  make test-env        Start full test env (build + up)"
+	@echo "  make test-env-down   Stop test env + remove volumes"
+	@echo "  make test-env-logs   Follow logs from test env"
+	@echo "  make exec-a          Shell into client-a"
+	@echo "  make exec-b          Shell into client-b"
+	@echo ""
+	@echo "Docker (single container, local storage):"
+	@echo "  make single          Build single-container Docker image"
+	@echo "  make single-up       Start single-container (compose)"
+	@echo "  make single-down     Stop single-container"
+	@echo "  make single-run      Run single container (docker run)"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make test              Run all tests"
-	@echo "  make lint              Lint all code"
-	@echo "  make fmt               Format all code"
-	@echo "  make clean             Remove build artifacts"
-	@echo "  make deps              Download dependencies"
+	@echo "  make test            Run all tests"
+	@echo "  make lint            Lint all code"
+	@echo "  make fmt             Format all code"
+	@echo "  make clean           Remove build artifacts"
+	@echo "  make deps            Download dependencies"

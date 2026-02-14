@@ -3,6 +3,10 @@ bin/
 /fuse-client
 /seed-tool
 /server
+/windows-client
+phase2/fuse-client
+phase2/server
+phase2/seed-tool
 *.exe
 *.exe~
 *.dll
@@ -39,9 +43,8 @@ build/
 .env.local
 .env.*.local
 
-# Test data (keep structure, ignore content)
-phase0/testdata/*
-!phase0/testdata/.gitkeep
+# Test reports
+test-report*.txt
 
 # Docker
 docker-compose.override.yml

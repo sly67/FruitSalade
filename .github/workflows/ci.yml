@@ -17,15 +17,9 @@ jobs:
           go-version: "1.24"
           cache-dependency-path: |
             shared/go.sum
-            phase0/go.sum
-            phase1/go.sum
             phase2/go.sum
       - name: Vet shared
         run: cd shared && go vet ./...
-      - name: Vet phase0
-        run: cd phase0 && go vet ./...
-      - name: Vet phase1
-        run: cd phase1 && go vet ./...
       - name: Vet phase2
         run: cd phase2 && go vet ./...
 
@@ -34,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: [shared, phase0, phase1, phase2]
+        module: [shared, phase2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -101,21 +95,13 @@ jobs:
           go-version: "1.24"
           cache-dependency-path: |
             shared/go.sum
-            phase0/go.sum
-            phase1/go.sum
             phase2/go.sum
-      - name: Build Phase 0
-        run: |
-          cd phase0 && go build -o ../bin/phase0-server ./cmd/server
-          cd ../phase0 && go build -o ../bin/phase0-fuse ./cmd/fuse-client
-      - name: Build Phase 1
-        run: |
-          cd phase1 && go build -o ../bin/phase1-server ./cmd/server
-          cd ../phase1 && go build -o ../bin/phase1-fuse ./cmd/fuse-client
-      - name: Build Phase 2
-        run: |
-          cd phase2 && go build -o ../bin/phase2-server ./cmd/server
-          cd ../phase2 && go build -o ../bin/phase2-fuse ./cmd/fuse-client
+      - name: Build server
+        run: cd phase2 && go build -o ../bin/server ./cmd/server
+      - name: Build FUSE client
+        run: cd phase2 && go build -o ../bin/fuse-client ./cmd/fuse-client
+      - name: Build seed tool
+        run: cd phase2 && go build -o ../bin/seed-tool ./cmd/seed-tool
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

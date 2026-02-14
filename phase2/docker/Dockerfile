@@ -11,10 +11,9 @@ RUN apk add --no-cache git
 
 WORKDIR /build
 
-# Copy workspace and source (shared + phase1 seed tool + phase2 server/client)
+# Copy workspace and source
 COPY go.work ./
 COPY shared/ ./shared/
-COPY phase1/ ./phase1/
 COPY phase2/ ./phase2/
 
 # Build Phase 2 server, FUSE client, and seed tool
@@ -34,8 +33,6 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /bin/server /app/server
-# Merge Phase 1 base migrations + Phase 2 migrations into one directory
-COPY phase1/migrations/ /app/migrations/
 COPY phase2/migrations/ /app/migrations/
 
 EXPOSE 8080 9090
@@ -55,9 +52,8 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /bin/seed-tool /app/seed-tool
-COPY phase1/migrations/ /app/migrations/
 COPY phase2/migrations/ /app/migrations/
-COPY phase1/testdata/ /testdata/
+COPY phase2/testdata/ /testdata/
 
 ENTRYPOINT ["/app/seed-tool"]
 

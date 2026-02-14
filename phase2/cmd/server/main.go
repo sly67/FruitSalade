@@ -250,7 +250,7 @@ func findMigrationsDir() string {
 		"migrations",
 		"phase2/migrations",
 		"../migrations",
-		"../phase1/migrations", // Phase 2 can use Phase 1 migrations
+		"../migrations",
 	}
 
 	exe, _ := os.Executable()
