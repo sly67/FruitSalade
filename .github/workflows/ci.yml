@@ -17,18 +17,18 @@ jobs:
           go-version: "1.24"
           cache-dependency-path: |
             shared/go.sum
-            phase2/go.sum
+            fruitsalade/go.sum
       - name: Vet shared
         run: cd shared && go vet ./...
-      - name: Vet phase2
-        run: cd phase2 && go vet ./...
+      - name: Vet app
+        run: cd fruitsalade && go vet ./...
 
   test-unit:
     name: Test (${{ matrix.module }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: [shared, phase2]
+        module: [shared, fruitsalade]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-          cache-dependency-path: phase2/go.sum
+          cache-dependency-path: fruitsalade/go.sum
       - name: Create MinIO bucket
         run: |
           curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
@@ -83,7 +83,7 @@ jobs:
         env:
           TEST_DATABASE_URL: "postgres://fruitsalade:fruitsalade@localhost:5432/fruitsalade_test?sslmode=disable"
           TEST_S3_ENDPOINT: "http://localhost:9000"
-        run: cd phase2 && go test -v -count=1 ./internal/api/
+        run: cd fruitsalade && go test -v -count=1 ./internal/api/
 
   build:
     name: Build
@@ -95,13 +95,13 @@ jobs:
           go-version: "1.24"
           cache-dependency-path: |
             shared/go.sum
-            phase2/go.sum
+            fruitsalade/go.sum
       - name: Build server
-        run: cd phase2 && go build -o ../bin/server ./cmd/server
+        run: cd fruitsalade && go build -o ../bin/server ./cmd/server
       - name: Build FUSE client
-        run: cd phase2 && go build -o ../bin/fuse-client ./cmd/fuse-client
+        run: cd fruitsalade && go build -o ../bin/fuse-client ./cmd/fuse-client
       - name: Build seed tool
-        run: cd phase2 && go build -o ../bin/seed-tool ./cmd/seed-tool
+        run: cd fruitsalade && go build -o ../bin/seed-tool ./cmd/seed-tool
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

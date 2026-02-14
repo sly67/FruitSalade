@@ -4,9 +4,9 @@ bin/
 /seed-tool
 /server
 /windows-client
-phase2/fuse-client
-phase2/server
-phase2/seed-tool
+fruitsalade/fuse-client
+fruitsalade/server
+fruitsalade/seed-tool
 *.exe
 *.exe~
 *.dll

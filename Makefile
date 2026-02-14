@@ -10,39 +10,39 @@ all: server fuse
 
 server:
 	@echo "Building Server..."
-	cd phase2 && go build -o ../bin/server ./cmd/server
+	cd fruitsalade && go build -o ../bin/server ./cmd/server
 
 fuse:
 	@echo "Building FUSE Client..."
-	cd phase2 && go build -o ../bin/fuse-client ./cmd/fuse-client
+	cd fruitsalade && go build -o ../bin/fuse-client ./cmd/fuse-client
 
 seed:
 	@echo "Building Seed Tool..."
-	cd phase2 && go build -o ../bin/seed-tool ./cmd/seed-tool
+	cd fruitsalade && go build -o ../bin/seed-tool ./cmd/seed-tool
 
 winclient:
 	@echo "Building Windows Client (cgofuse, native)..."
-	cd phase2 && go build -o ../bin/winclient ./cmd/windows-client
+	cd fruitsalade && go build -o ../bin/winclient ./cmd/windows-client
 
 windows:
 	@echo "Building Windows Client (cross-compile for Windows)..."
 	@echo "Requires: Windows build environment with CGO"
-	cd phase2 && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o ../bin/windows-client.exe ./cmd/windows-client
+	cd fruitsalade && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o ../bin/windows-client.exe ./cmd/windows-client
 
 #==============================================================================
 # TEST
 #==============================================================================
-.PHONY: test test-shared test-phase2
+.PHONY: test test-shared test-app
 
-test: test-shared test-phase2
+test: test-shared test-app
 
 test-shared:
 	@echo "Testing Shared package..."
 	cd shared && go test ./...
 
-test-phase2:
-	@echo "Testing Phase 2..."
-	cd phase2 && go test ./...
+test-app:
+	@echo "Testing FruitSalade..."
+	cd fruitsalade && go test ./...
 
 #==============================================================================
 # DOCKER - Multi-container (S3 backend)
@@ -51,26 +51,26 @@ test-phase2:
 
 docker:
 	@echo "Building Docker images..."
-	docker build -t fruitsalade:server --target server -f phase2/docker/Dockerfile .
-	docker build -t fruitsalade:seed --target seed -f phase2/docker/Dockerfile .
-	docker build -t fruitsalade:fuse --target fuse-client -f phase2/docker/Dockerfile .
+	docker build -t fruitsalade:server --target server -f fruitsalade/docker/Dockerfile .
+	docker build -t fruitsalade:seed --target seed -f fruitsalade/docker/Dockerfile .
+	docker build -t fruitsalade:fuse --target fuse-client -f fruitsalade/docker/Dockerfile .
 
 test-env:
 	@echo "Starting test environment (postgres + minio + server + 2 clients)..."
-	docker compose -f phase2/docker/docker-compose.yml up -d --build
+	docker compose -f fruitsalade/docker/docker-compose.yml up -d --build
 
 test-env-down:
 	@echo "Stopping test environment and removing volumes..."
-	docker compose -f phase2/docker/docker-compose.yml down -v
+	docker compose -f fruitsalade/docker/docker-compose.yml down -v
 
 test-env-logs:
-	docker compose -f phase2/docker/docker-compose.yml logs -f
+	docker compose -f fruitsalade/docker/docker-compose.yml logs -f
 
 exec-a:
-	docker compose -f phase2/docker/docker-compose.yml exec client-a sh
+	docker compose -f fruitsalade/docker/docker-compose.yml exec client-a sh
 
 exec-b:
-	docker compose -f phase2/docker/docker-compose.yml exec client-b sh
+	docker compose -f fruitsalade/docker/docker-compose.yml exec client-b sh
 
 #==============================================================================
 # DOCKER - Single container (local storage)
@@ -79,15 +79,15 @@ exec-b:
 
 single:
 	@echo "Building single-container Docker image..."
-	docker build -t fruitsalade:single -f phase2/docker/Dockerfile.single .
+	docker build -t fruitsalade:single -f fruitsalade/docker/Dockerfile.single .
 
 single-up:
 	@echo "Starting single-container deployment..."
-	docker compose -f phase2/docker/docker-compose.single.yml up -d --build
+	docker compose -f fruitsalade/docker/docker-compose.single.yml up -d --build
 
 single-down:
 	@echo "Stopping single-container deployment..."
-	docker compose -f phase2/docker/docker-compose.single.yml down
+	docker compose -f fruitsalade/docker/docker-compose.single.yml down
 
 single-run:
 	@echo "Running single container (docker run)..."
@@ -105,21 +105,21 @@ single-run:
 
 clean:
 	rm -rf bin/
-	rm -rf phase2/bin
+	rm -rf fruitsalade/bin
 
 lint:
 	@echo "Linting..."
 	cd shared && go vet ./...
-	cd phase2 && go vet ./...
+	cd fruitsalade && go vet ./...
 
 fmt:
 	@echo "Formatting..."
-	gofmt -s -w shared/ phase2/
+	gofmt -s -w shared/ fruitsalade/
 
 deps:
 	@echo "Downloading dependencies..."
 	cd shared && go mod download
-	cd phase2 && go mod download
+	cd fruitsalade && go mod download
 
 #==============================================================================
 # HELP
@@ -137,7 +137,7 @@ help:
 	@echo "Test:"
 	@echo "  make test            Run all tests"
 	@echo "  make test-shared     Run shared package tests"
-	@echo "  make test-phase2     Run Phase 2 tests"
+	@echo "  make test-app        Run app tests"
 	@echo ""
 	@echo "Docker (multi-container, S3 backend):"
 	@echo "  make docker          Build all Docker images"
