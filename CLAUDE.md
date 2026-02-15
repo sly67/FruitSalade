@@ -46,8 +46,7 @@ FruitSalade/
 │   ├── migrations/         # PostgreSQL migrations (001-007)
 │   ├── docker/             # Dockerfiles and compose files
 │   ├── deploy/             # Systemd units, Grafana dashboard
-│   ├── ui/                 # Admin UI (go:embed)
-│   ├── webapp/             # Webapp file browser (go:embed)
+│   ├── webapp/             # Web app (go:embed, served at /app/)
 │   ├── windows/            # C++ CfAPI shim
 │   └── testdata/           # Seed data for Docker environments
 │

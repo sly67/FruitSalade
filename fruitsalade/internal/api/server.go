@@ -29,7 +29,6 @@ import (
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/sharing"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/storage"
 	davpkg "github.com/fruitsalade/fruitsalade/fruitsalade/internal/webdav"
-	"github.com/fruitsalade/fruitsalade/fruitsalade/ui"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/webapp"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/protocol"
@@ -141,17 +140,18 @@ func (s *Server) Handler() http.Handler {
 	// Public share link download (no auth)
 	mux.HandleFunc("GET /api/v1/share/{token}", s.handleShareDownload)
 
-	// Admin UI static files (no auth — the UI handles login via API)
-	uiFS, _ := fs.Sub(ui.Assets, ".")
-	mux.Handle("/admin/", http.StripPrefix("/admin/", http.FileServer(http.FS(uiFS))))
-	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
-	})
-
-	// Web file browser (no auth — the app handles login via API)
+	// Web app (no auth — the app handles login via API)
 	appFS, _ := fs.Sub(webapp.Assets, ".")
 	mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.FS(appFS))))
 	mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
+	})
+
+	// Redirect old /admin/ to /app/
+	mux.HandleFunc("/admin/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
 	})
 

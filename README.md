@@ -18,7 +18,7 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **Multi-backend storage** -- S3/MinIO, local filesystem, and SMB backends with per-group storage locations
 - **File sharing** -- ACL-based permissions with path inheritance + share links (password, expiry, download limits)
 - **Rate limiting & quotas** -- per-user storage, bandwidth, RPM, and upload size limits
-- **Admin dashboard** -- embedded web UI at `/admin/` for managing users, files, and share links
+- **Web app** -- embedded file browser and admin dashboard at `/app/` with dark mode, batch actions, user/group/storage management
 - **TLS/HTTPS** -- optional TLS 1.3 with certificate files
 - **OIDC authentication** -- federated login via Keycloak, Auth0, etc. with auto user provisioning
 - **Token management** -- revoke, refresh, and list active sessions per user
@@ -29,7 +29,6 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **File visibility** -- per-file visibility (public/group/private) with group ownership
 - **File properties** -- aggregated metadata, ownership, permissions, shares, and version count
 - **Version explorer** -- browse all versioned files with timeline, preview, and diff
-- **Webapp** -- full-featured file browser with dark mode, sortable columns, kebab/context menus, multi-select batch actions, inline rename, detail panel, toast notifications
 - **WebDAV** -- standards-compliant WebDAV access for third-party client compatibility
 - **Windows client** -- CfAPI + cgofuse dual backend with Windows Service support
 - **Single-container Docker** -- all-in-one image with embedded PostgreSQL and local storage, no external dependencies
@@ -150,8 +149,7 @@ fruitsalade/
 │   ├── migrations/         # PostgreSQL schema migrations
 │   ├── docker/             # Dockerfiles and compose files
 │   ├── deploy/             # Systemd units, Grafana dashboard
-│   ├── webapp/             # File browser web app (served at /app/)
-│   ├── ui/                 # Admin dashboard (embedded, served at /admin/)
+│   ├── webapp/             # Web app (embedded, served at /app/)
 │   └── windows/            # C++ CfAPI shim
 │
 ├── go.work                 # Go workspace (links shared + fruitsalade)
@@ -247,8 +245,7 @@ Content responses include `ETag` (SHA256 hash) and `X-Version` headers.
 | `/api/v1/admin/sharelinks` | GET | List all share links (admin) |
 | `/api/v1/admin/stats` | GET | Dashboard stats (admin) |
 | `/api/v1/admin/config` | GET/PUT | Get/update server configuration (admin) |
-| `/admin/` | - | Admin web UI |
-| `/app/` | - | Webapp file browser |
+| `/app/` | - | Web app (file browser + admin) |
 
 ### Groups (Admin)
 

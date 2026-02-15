@@ -45,9 +45,9 @@ This is the main application directory containing the server, clients, and all i
 - [x] Per-user quotas: storage, bandwidth/day, requests/min, upload size
 - [x] In-memory token bucket rate limiter
 
-### Admin UI
+### Web App
 - [x] Vanilla HTML/CSS/JS embedded via `go:embed` (no build step)
-- [x] Served at `/admin/` with hash-based SPA routing
+- [x] Served at `/app/` with hash-based SPA routing
 - [x] Dashboard, users, files, share links, groups, storage management
 
 ### Webapp
@@ -133,7 +133,7 @@ curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
 # Check metrics
 curl http://localhost:9090/metrics | grep fruitsalade
 
-# Admin UI: http://localhost:8080/admin/
+# Web app: http://localhost:8080/app/
 # Webapp:   http://localhost:8080/app/
 # Login with admin/admin
 ```
