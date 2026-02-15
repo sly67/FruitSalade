@@ -15,7 +15,7 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **Conflict detection** -- optimistic locking via `X-Expected-Version` / `If-Match` headers
 - **JWT authentication** -- per-device tokens with revocation support
 - **Observability** -- Prometheus metrics + structured JSON logging (zap)
-- **S3 backend** -- content stored in S3/MinIO, metadata in PostgreSQL
+- **Multi-backend storage** -- S3/MinIO, local filesystem, and SMB backends with per-group storage locations
 - **File sharing** -- ACL-based permissions with path inheritance + share links (password, expiry, download limits)
 - **Rate limiting & quotas** -- per-user storage, bandwidth, RPM, and upload size limits
 - **Admin dashboard** -- embedded web UI at `/admin/` for managing users, files, and share links
@@ -30,35 +30,37 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **File properties** -- aggregated metadata, ownership, permissions, shares, and version count
 - **Version explorer** -- browse all versioned files with timeline, preview, and diff
 - **Webapp** -- full-featured file browser with dark mode, sortable columns, kebab/context menus, multi-select batch actions, inline rename, detail panel, toast notifications
+- **WebDAV** -- standards-compliant WebDAV access for third-party client compatibility
 - **Windows client** -- CfAPI + cgofuse dual backend with Windows Service support
-- **CI pipeline** -- GitHub Actions (lint, test, build, Docker)
+- **Single-container Docker** -- all-in-one image with embedded PostgreSQL and local storage, no external dependencies
 - **Docker-ready** -- full test environment with compose (server, 2 FUSE clients, PostgreSQL, MinIO)
+- **CI pipeline** -- GitHub Actions (lint, test, build, Docker)
 
 ## Architecture
 
 ```
                     FUSE Clients
-                  ┌──────────────┐
-                  │  client-a    │──┐
-                  │  /mnt/fruit  │  │  HTTP + JWT
-                  └──────────────┘  │
-                  ┌──────────────┐  │  ┌─────────────────────────┐
-                  │  client-b    │──┴─>│      API Server         │
-                  │  /mnt/fruit  │     │      :8080               │
-                  └──────────────┘     │                         │
-                                       │  GET  /api/v1/tree      │
-                                       │  GET  /api/v1/content/* │
-                                       │  POST /api/v1/content/* │
-                                       │  GET  /api/v1/versions/*│
-                                       └────────┬───────┬────────┘
-                                                 │       │
-                                       ┌─────────┘       └─────────┐
+                  +──────────────+
+                  |  client-a    |──+
+                  |  /mnt/fruit  |  |  HTTP + JWT
+                  +──────────────+  |
+                  +──────────────+  |  +─────────────────────────+
+                  |  client-b    |──+─>|      API Server         |
+                  |  /mnt/fruit  |     |      :8080               |
+                  +──────────────+     |                         |
+                                       |  GET  /api/v1/tree      |
+                                       |  GET  /api/v1/content/* |
+                                       |  POST /api/v1/content/* |
+                                       |  GET  /api/v1/versions/*|
+                                       +────────+───────+────────+
+                                                 |       |
+                                       +─────────+       +─────────+
                                        v                           v
-                                 ┌───────────┐             ┌─────────────┐
-                                 │ PostgreSQL│             │  S3 / MinIO │
-                                 │ metadata  │             │  content    │
-                                 │ auth      │             │  versions   │
-                                 └───────────┘             └─────────────┘
+                                 +───────────+     +─────────────────────+
+                                 | PostgreSQL|     | S3 / MinIO / Local  |
+                                 | metadata  |     |       / SMB         |
+                                 | auth      |     | content, versions   |
+                                 +───────────+     +─────────────────────+
 ```
 
 ## Quick Start
@@ -66,47 +68,47 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 ### Docker Test Environment (recommended)
 
 ```bash
-make phase1-test-env
+make test-env
 ```
 
 This starts PostgreSQL, MinIO, seeds test data, launches the server, and mounts two independent FUSE clients.
 
 ```bash
 # Verify both clients see the same files
-docker compose -f phase1/docker/docker-compose.yml exec client-a ls /mnt/fruitsalade
-docker compose -f phase1/docker/docker-compose.yml exec client-b cat /mnt/fruitsalade/hello.txt
+docker compose -f fruitsalade/docker/docker-compose.yml exec client-a ls /mnt/fruitsalade
+docker compose -f fruitsalade/docker/docker-compose.yml exec client-b cat /mnt/fruitsalade/hello.txt
 
 # Shell into a client
-make phase1-exec-a
+make exec-a
 
 # Tear down
-make phase1-test-env-down
+make test-env-down
 ```
 
 ### Local Development
 
 ```bash
-# Build everything
-make phase2
+# Build everything (server + FUSE client)
+make
 
-# Run server (requires PostgreSQL + MinIO)
+# Run server (requires PostgreSQL + S3/MinIO, or use STORAGE_BACKEND=local)
 DATABASE_URL="postgres://user:pass@localhost/fruitsalade?sslmode=disable" \
 JWT_SECRET="dev-secret" \
-./bin/phase2-server
+./bin/server
 
 # In another terminal, mount the FUSE client
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin"}' | jq -r .token)
 
-./bin/phase2-fuse -mount /tmp/fruitsalade -server http://localhost:8080 -token "$TOKEN"
+./bin/fuse-client -mount /tmp/fruitsalade -server http://localhost:8080 -token "$TOKEN"
 ```
 
 ## Project Structure
 
 ```
 fruitsalade/
-├── shared/                 # Shared code across all phases
+├── shared/                 # Shared libraries (reusable across clients)
 │   └── pkg/
 │       ├── cache/          # LRU file cache with pinning
 │       ├── client/         # HTTP client (retry, offline, auth, upload)
@@ -117,11 +119,33 @@ fruitsalade/
 │       ├── retry/          # Retry with backoff
 │       └── tree/           # Shared tree utilities (FindByPath, CacheID, CountNodes)
 │
-├── phase0/                 # Proof of Concept (local filesystem backend)
-├── phase1/                 # MVP (PostgreSQL + S3 + JWT + Docker)
-├── phase2/                 # Production (metrics, logging, versioning)
+├── fruitsalade/            # Main application
+│   ├── cmd/
+│   │   ├── server/         # API server entry point
+│   │   ├── fuse-client/    # Linux FUSE client entry point
+│   │   ├── seed-tool/      # Test data seeder
+│   │   └── windows-client/ # Windows CfAPI + cgofuse client
+│   ├── internal/
+│   │   ├── api/            # HTTP handlers + middleware
+│   │   ├── auth/           # JWT, OIDC, bcrypt
+│   │   ├── config/         # Server configuration
+│   │   ├── events/         # SSE broadcaster
+│   │   ├── logging/        # Structured logging (zap)
+│   │   ├── metadata/       # PostgreSQL metadata store
+│   │   ├── metrics/        # Prometheus instrumentation
+│   │   ├── quota/          # Per-user quotas and rate limiting
+│   │   ├── sharing/        # Permissions, share links, groups
+│   │   ├── storage/        # Multi-backend storage (S3, local, SMB)
+│   │   ├── webdav/         # WebDAV handler
+│   │   └── winclient/      # Windows client core + backends
+│   ├── migrations/         # PostgreSQL schema migrations
+│   ├── docker/             # Dockerfiles and compose files
+│   ├── deploy/             # Systemd units, Grafana dashboard
+│   ├── webapp/             # File browser web app (served at /app/)
+│   ├── ui/                 # Admin dashboard (embedded, served at /admin/)
+│   └── windows/            # C++ CfAPI shim
 │
-├── go.work                 # Go workspace
+├── go.work                 # Go workspace (links shared + fruitsalade)
 └── Makefile                # Build targets
 ```
 
@@ -270,38 +294,50 @@ The FUSE client supports full read-write access:
 
 ```bash
 # Mount (default behavior)
-./bin/phase2-fuse -mount /tmp/fruit -server http://localhost:8080 -token "$TOKEN"
+./bin/fuse-client -mount /tmp/fruit -server http://localhost:8080 -token "$TOKEN"
 
 # Pin a file for permanent local caching
-./bin/phase2-fuse pin -cache /tmp/fruitsalade-cache /path/to/file.txt
+./bin/fuse-client pin -cache /tmp/fruitsalade-cache /path/to/file.txt
 
 # Unpin a file
-./bin/phase2-fuse unpin -cache /tmp/fruitsalade-cache /path/to/file.txt
+./bin/fuse-client unpin -cache /tmp/fruitsalade-cache /path/to/file.txt
 
 # List pinned files
-./bin/phase2-fuse pinned -cache /tmp/fruitsalade-cache
+./bin/fuse-client pinned -cache /tmp/fruitsalade-cache
 
 # Cache status
-./bin/phase2-fuse status -cache /tmp/fruitsalade-cache
+./bin/fuse-client status -cache /tmp/fruitsalade-cache
 ```
 
 ## Build Targets
 
 ```bash
-make phase0              # Build Phase 0 (PoC)
-make phase1              # Build Phase 1 (MVP)
-make phase2              # Build Phase 2 (Production)
+# Build
+make                   # Build server + FUSE client (default)
+make server            # Build server only
+make fuse              # Build FUSE client only
+make seed              # Build seed tool
+make winclient         # Build Windows client (native, cgofuse)
+make windows           # Cross-compile Windows client (requires CGO)
 
-make phase1-test-env     # Phase 1 Docker test environment
-make phase1-test-env-down # Stop Phase 1 environment
+# Docker (multi-container, S3 backend)
+make docker            # Build all Docker images
+make test-env          # Start full test env (postgres + minio + server + 2 clients)
+make test-env-down     # Stop test env + remove volumes
+make exec-a            # Shell into client-a
+make exec-b            # Shell into client-b
 
-make phase2-test-env     # Phase 2 Docker test environment (recommended)
-make phase2-test-env-down # Stop Phase 2 environment
+# Docker (single container, local storage)
+make single            # Build single-container Docker image
+make single-up         # Start single-container (compose)
+make single-down       # Stop single-container
+make single-run        # Run single container (docker run)
 
-make test                # Run all tests
-make fmt                 # Format code
-make lint                # Lint code
-make clean               # Remove build artifacts
+# Utilities
+make test              # Run all tests
+make fmt               # Format code
+make lint              # Lint code
+make clean             # Remove build artifacts
 ```
 
 ## Configuration
@@ -314,6 +350,8 @@ make clean               # Remove build artifacts
 | `METRICS_ADDR` | `:9090` | Prometheus metrics address |
 | `DATABASE_URL` | (required) | PostgreSQL connection string |
 | `JWT_SECRET` | (required) | JWT signing secret |
+| `STORAGE_BACKEND` | `local` | Storage backend (`local` or `s3`) |
+| `LOCAL_STORAGE_PATH` | `/data/storage` | Local storage directory (when `STORAGE_BACKEND=local`) |
 | `S3_ENDPOINT` | `http://localhost:9000` | S3/MinIO endpoint |
 | `S3_BUCKET` | `fruitsalade` | S3 bucket name |
 | `S3_ACCESS_KEY` | `minioadmin` | S3 access key |
@@ -353,11 +391,3 @@ make clean               # Remove build artifacts
 | Logging | Uber zap |
 | Auth | JWT (golang-jwt/jwt/v5), bcrypt, OIDC (go-oidc/v3) |
 | Container | Docker, Docker Compose |
-
-## Phase Overview
-
-| Phase | Focus | Status |
-|-------|-------|--------|
-| **Phase 0** | Proof of Concept -- local filesystem backend, basic FUSE | Complete |
-| **Phase 1** | MVP -- PostgreSQL, S3, JWT auth, Docker test env | Complete |
-| **Phase 2** | Production -- metrics, logging, write ops, versioning, sharing, quotas, groups, admin UI, Windows client | Complete |

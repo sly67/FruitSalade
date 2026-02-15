@@ -1,303 +1,83 @@
-# Phase 2: Production Features
+# FruitSalade - Application
 
-## Aim
-
-Extend the MVP into a full-featured production system with write support, observability, file versioning, and conflict detection.
+This is the main application directory containing the server, clients, and all internal packages.
 
 ## Implemented Features
 
-### 2.1 Observability (Complete)
+### Observability
 - [x] Prometheus metrics endpoint (`/metrics` on port 9090)
 - [x] Structured JSON logging (zap)
 - [x] Request logging with correlation IDs
-- [x] HTTP request metrics (count, duration, status)
-- [x] Content transfer metrics (bytes downloaded/uploaded)
-- [x] Database query metrics
-- [x] S3 operation metrics
-- [x] Authentication metrics
+- [x] HTTP, content, database, S3, auth, sharing, quota metrics
 
-### 2.2 Write Operations - Server Side (Complete)
-- [x] File upload endpoint (`POST /api/v1/content/{path}`)
+### Write Operations - Server
+- [x] File upload (`POST /api/v1/content/{path}`)
 - [x] Directory creation (`PUT /api/v1/tree/{path}?type=dir`)
 - [x] File/directory deletion (`DELETE /api/v1/tree/{path}`)
 - [x] Recursive directory deletion
 - [x] Automatic parent directory creation
-- [x] Max upload size limit (configurable)
+- [x] Configurable max upload size
 
-### 2.3 Write Operations - FUSE Client (Complete)
-- [x] Create -- new file creation with temp file buffer
-- [x] Write -- buffered writes to temp file
-- [x] Flush -- upload to server on file close
-- [x] Mkdir -- create directory on server
-- [x] Unlink -- delete file from server + evict cache
-- [x] Rmdir -- remove empty directory from server
-- [x] Rename -- re-upload under new path + delete old
-- [x] Setattr -- truncate and mtime changes
-- [x] Open for write -- existing files opened with O_WRONLY/O_RDWR/O_TRUNC
+### Write Operations - FUSE Client
+- [x] Create, Write, Flush, Mkdir, Unlink, Rmdir, Rename, Setattr
 
-### 2.4 File Versioning (Complete)
-- [x] Automatic version history on file upload
-- [x] Version backup to S3 (`_versions/{key}/{version}`)
-- [x] List version history (`GET /api/v1/versions/{path}`)
-- [x] Download specific version content (`GET /api/v1/versions/{path}?v=N`)
-- [x] Rollback to previous version (`POST /api/v1/versions/{path}`)
-- [x] Database migration for `file_versions` table and `version` column
+### File Versioning
+- [x] Automatic version history on upload
+- [x] Version backup to storage backend
+- [x] List/download/rollback versions
+- [x] Database migration for `file_versions` table
 
-### 2.5 Conflict Detection (Complete)
+### Conflict Detection
 - [x] Optimistic concurrency via `X-Expected-Version` header
-- [x] ETag-based conflict detection via `If-Match` header
+- [x] ETag-based via `If-Match` header
 - [x] 409 Conflict response with version details
-- [x] `ETag` and `X-Version` headers on content downloads
-- [x] Default last-write-wins (backward compatible)
 
-### 2.6 SSE Real-Time Sync (Complete)
+### SSE Real-Time Sync
 - [x] `events.Broadcaster` with subscribe/unsubscribe/publish
 - [x] SSE endpoint (`GET /api/v1/events`)
-- [x] Events published from upload, create, delete, and rollback handlers
 - [x] FUSE client `--watch` flag for live metadata refresh
 
-### 2.7 File Sharing (Complete)
-- [x] ACL-based permissions (`file_permissions` table)
-- [x] Path inheritance (permission on `/docs` applies to `/docs/sub/file.txt`)
-- [x] Permission levels: read, write, owner (hierarchical)
-- [x] Share links with optional password (bcrypt), expiry, and download limits
-- [x] Public download endpoint (`GET /api/v1/share/{token}`)
-- [x] Database migrations (`003_sharing`)
+### File Sharing
+- [x] ACL-based permissions with path inheritance
+- [x] Share links with optional password, expiry, and download limits
 
-### 2.8 Rate Limiting & Quotas (Complete)
+### Rate Limiting & Quotas
 - [x] Per-user quotas: storage, bandwidth/day, requests/min, upload size
 - [x] In-memory token bucket rate limiter
-- [x] Daily bandwidth tracking (`bandwidth_usage` table)
-- [x] Middleware chain: metrics -> logging -> mux -> auth -> rateLimiter -> handler
-- [x] Database migrations (`004_quotas`)
 
-### 2.9 Admin UI (Complete)
+### Admin UI
 - [x] Vanilla HTML/CSS/JS embedded via `go:embed` (no build step)
 - [x] Served at `/admin/` with hash-based SPA routing
-- [x] Login with admin-only access check
-- [x] Dashboard: user count, sessions, files, storage, share links
-- [x] Users: list, create, delete, change password, view group memberships
-- [x] Files: browse metadata tree with breadcrumb navigation
-- [x] Share Links: list all with revoke action
-- [x] Groups: tree/flat views, create/delete groups, manage members and roles, group permissions
-- [x] Admin API endpoints (`/api/v1/admin/{users,sharelinks,stats,groups,config}`)
+- [x] Dashboard, users, files, share links, groups, storage management
 
-### 2.10 CI Pipeline (Complete)
-- [x] GitHub Actions workflow (lint, test, build, Docker)
+### Webapp
+- [x] Full-featured file browser at `/app/`
+- [x] Dark mode, sortable columns, kebab/context menus
+- [x] Multi-select batch actions, inline rename, detail panel
 
-### 2.11 Docker Environment (Complete)
-- [x] Docker Compose with server, PostgreSQL, MinIO, 2 FUSE clients
-- [x] Dockerfile with multi-stage build
-- [x] Automated database seeding and migration
+### User Groups
+- [x] Nested group hierarchy with RBAC roles (admin/editor/viewer)
+- [x] File visibility (public/group/private) with group ownership
+- [x] Auto-provisioning of group directories
+- [x] Cycle-prevention DB trigger
 
-### 2.12 TLS/HTTPS (Complete)
-- [x] Optional TLS 1.3 support via `TLS_CERT_FILE` and `TLS_KEY_FILE` env vars
-- [x] Automatic fallback to HTTP when not configured
+### Multi-Backend Storage
+- [x] S3/MinIO, local filesystem, SMB backends
+- [x] Per-group storage locations via storage router
+- [x] Admin API and UI for managing storage locations
 
-### 2.13 OIDC Authentication (Complete)
-- [x] Federated authentication via OpenID Connect (Keycloak, Auth0, etc.)
-- [x] Auto-provisioning of local users on first OIDC login
-- [x] Admin claim mapping from OIDC token claims
-- [x] Dual auth: tries local JWT first, falls back to OIDC
+### Windows Client
+- [x] CfAPI + cgofuse dual backend
+- [x] C++ CfAPI shim for cloud files API
+- [x] Windows Service support
 
-### 2.14 Token Management (Complete)
-- [x] Token revocation (`DELETE /api/v1/auth/token`)
-- [x] Token refresh (`POST /api/v1/auth/refresh`)
-- [x] Session listing (`GET /api/v1/auth/sessions`)
-- [x] Session revocation (`DELETE /api/v1/auth/sessions/{id}`)
-
-### 2.15 Pin/Unpin CLI (Complete)
-- [x] `pin` subcommand: pin files for permanent local caching
-- [x] `unpin` subcommand: remove pin from cached files
-- [x] `pinned` subcommand: list all pinned files
-- [x] `status` subcommand: show cache usage and pin count
-- [x] Pin state persisted to JSON in cache directory
-
-### 2.16 Deployment (Complete)
-- [x] Systemd service file for server (`fruitsalade-server.service`)
-- [x] Systemd template unit for FUSE clients (`fruitsalade-fuse@.service`)
-- [x] Grafana dashboard JSON (`phase2/deploy/grafana-dashboard.json`)
-
-### 2.17 User Groups & Organizations (Complete)
-- [x] Nested group hierarchy (`parent_id` — org > team > sub-team)
-- [x] RBAC roles per membership: `admin`, `editor`, `viewer`
-- [x] Role-to-permission mapping: viewer→read, editor/admin→write
-- [x] Effective role inheritance through ancestor groups
-- [x] File visibility: `public`, `group`, `private` with `group_id` ownership
-- [x] Auto-provisioning: `/{group}/shared/` on group creation, `/{group}/home/{user}/` on member add
-- [x] Cycle-prevention DB trigger on group parent changes
-- [x] Group-level path permissions (ACLs per group)
-- [x] Admin UI: tree/flat views, member management, group permissions
-- [x] Database migrations (`005_groups`, `006_nested_groups`)
-
-### 2.18 File Properties (Complete)
-- [x] Aggregated file properties endpoint (`GET /api/v1/properties/{path}`)
-- [x] Returns: metadata, owner name, group name, visibility, permissions, share links, version count
-- [x] Properties modal in webapp
-
-### 2.19 Version Explorer (Complete)
-- [x] List all versioned files (`GET /api/v1/versions`)
-- [x] Webapp: browse versioned files, timeline view, inline preview, LCS-based diff
-
-### 2.20 Windows Client (Complete)
-- [x] Dual backend: CfAPI (Windows native) + cgofuse (cross-platform FUSE)
-- [x] C++ CfAPI shim for cloud files API integration
-- [x] CGO bridge between Go core and C++ shim
-- [x] Windows Service support (install/uninstall via CLI flags)
-- [x] Incremental metadata diff for placeholder updates
-
-### 2.21 Webapp Overhaul (Complete)
-- [x] Shared JS utilities: Toast notifications, Modal helper, FileTypes (deduplicates code across all views)
-- [x] Layout restructure: topbar with global search + user dropdown, sidebar navigation with tree
-- [x] Dark mode: CSS custom properties, localStorage persistence, system preference detection
-- [x] File browser: sortable columns (name/size/version/modified), kebab (3-dot) and right-click context menus
-- [x] Inline rename: click Rename, edit name in-place, Enter to commit, Escape to cancel
-- [x] Multi-select: checkboxes per row, shift+click range selection, select-all header checkbox
-- [x] Batch actions: batch delete, batch download, batch visibility change
-- [x] Detail panel: sliding right sidebar for file properties (replaces modal)
-- [x] My Shares view: list user's share links with copy/revoke actions
-- [x] File-type-aware colored icons throughout (tree, browser, versions)
-- [x] Served at `/app/` via `go:embed`, no build step
-
-### 2.22 Go Client Fixes (Complete)
-- [x] Shared tree utilities extracted to `shared/pkg/tree/` (FindByPath, CacheID, CountNodes, Flatten)
-- [x] SSE mutex fix: `sync.RWMutex` for thread-safe `authToken` access
-- [x] cgofuse context: stored root context, cancelled on `Destroy()` for clean shutdown
-
-## API Endpoints
-
-### Read Operations
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/health` | GET | No | Health check |
-| `/api/v1/auth/token` | POST | No | Login, get JWT |
-| `/api/v1/auth/token` | DELETE | Yes | Revoke current token |
-| `/api/v1/auth/refresh` | POST | Yes | Refresh token |
-| `/api/v1/auth/sessions` | GET | Yes | List active sessions |
-| `/api/v1/auth/sessions/{id}` | DELETE | Yes | Revoke session |
-| `/api/v1/tree` | GET | Yes | Full metadata tree |
-| `/api/v1/tree/{path}` | GET | Yes | Subtree metadata |
-| `/api/v1/content/{path}` | GET | Yes | File content (Range, ETag, X-Version) |
-
-### Write Operations
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/content/{path}` | POST | Yes | Upload file (supports X-Expected-Version, If-Match) |
-| `/api/v1/tree/{path}?type=dir` | PUT | Yes | Create directory |
-| `/api/v1/tree/{path}` | DELETE | Yes | Delete file/directory |
-
-### Version Operations
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/versions/{path}` | GET | Yes | List version history |
-| `/api/v1/versions/{path}?v=N` | GET | Yes | Download version N content |
-| `/api/v1/versions/{path}` | POST | Yes | Rollback `{"version": N}` |
-
-### SSE Events
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/events` | GET | Yes | SSE stream (create, modify, delete, version events) |
-
-### Permissions
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/permissions/{path}` | PUT | Yes | Set permission `{user_id, permission}` |
-| `/api/v1/permissions/{path}` | GET | Yes | List permissions |
-| `/api/v1/permissions/{path}?user_id=N` | DELETE | Yes | Remove permission |
-
-### Share Links
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/shares` | GET | Yes | List current user's active share links |
-| `/api/v1/share/{path}` | POST | Yes | Create link `{password?, expires_in_sec?, max_downloads?}` |
-| `/api/v1/share/{id}` | DELETE | Yes | Revoke link |
-| `/api/v1/share/{token}` | GET | No | Download via link (public) |
-
-### Quotas
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/usage` | GET | Yes | Current user's usage |
-| `/api/v1/admin/quotas/{userID}` | GET | Admin | Get user quota |
-| `/api/v1/admin/quotas/{userID}` | PUT | Admin | Set user quota |
-
-### Admin
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/admin/users` | GET | Admin | List users |
-| `/api/v1/admin/users` | POST | Admin | Create user `{username, password, is_admin}` |
-| `/api/v1/admin/users/{id}` | DELETE | Admin | Delete user |
-| `/api/v1/admin/users/{id}/password` | PUT | Admin | Change password `{password}` |
-| `/api/v1/admin/users/{id}/groups` | GET | Admin | List user's group memberships with roles |
-| `/api/v1/admin/sharelinks` | GET | Admin | List share links (`?active=true`) |
-| `/api/v1/admin/stats` | GET | Admin | Dashboard stats |
-| `/api/v1/admin/config` | GET | Admin | Get server configuration |
-| `/api/v1/admin/config` | PUT | Admin | Update server configuration |
-| `/admin/` | - | - | Admin web UI (auth in-app) |
-| `/app/` | - | - | Webapp file browser (auth in-app) |
-
-### Groups (Admin)
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/admin/groups` | GET | Admin | List all groups |
-| `/api/v1/admin/groups` | POST | Admin | Create group `{name, description, parent_id?}` |
-| `/api/v1/admin/groups/tree` | GET | Admin | Get nested group tree |
-| `/api/v1/admin/groups/{id}` | GET | Admin | Get group details |
-| `/api/v1/admin/groups/{id}` | DELETE | Admin | Delete group |
-| `/api/v1/admin/groups/{id}/parent` | PUT | Admin | Move group `{parent_id}` |
-| `/api/v1/admin/groups/{id}/members` | GET | Admin* | List group members |
-| `/api/v1/admin/groups/{id}/members` | POST | Admin* | Add member `{user_id, role}` |
-| `/api/v1/admin/groups/{id}/members/{uid}/role` | PUT | Admin* | Update member role `{role}` |
-| `/api/v1/admin/groups/{id}/members/{uid}` | DELETE | Admin* | Remove member |
-| `/api/v1/admin/groups/{id}/permissions` | GET | Admin* | List group path permissions |
-| `/api/v1/admin/groups/{id}/permissions/{path}` | PUT | Admin* | Set group permission `{permission}` |
-| `/api/v1/admin/groups/{id}/permissions/{path}` | DELETE | Admin* | Remove group permission |
-
-*Admin or group admin (admin role within the group)
-
-### File Properties
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/properties/{path}` | GET | Yes | Aggregated file properties (metadata, owner, group, visibility, permissions, shares, versions) |
-
-### Visibility
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/visibility/{path}` | GET | Yes | Get file visibility (`public`/`group`/`private`) |
-| `/api/v1/visibility/{path}` | PUT | Yes | Set file visibility `{visibility, group_id?}` |
-
-### Version Explorer
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/v1/versions` | GET | Yes | List all files with version history |
-
-### Metrics
-| Endpoint | Port | Description |
-|----------|------|-------------|
-| `/metrics` | 9090 | Prometheus metrics |
-
-## Prometheus Metrics
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `fruitsalade_http_requests_total` | Counter | HTTP requests by method/path/status |
-| `fruitsalade_http_request_duration_seconds` | Histogram | Request duration |
-| `fruitsalade_content_bytes_downloaded_total` | Counter | Bytes downloaded |
-| `fruitsalade_content_bytes_uploaded_total` | Counter | Bytes uploaded |
-| `fruitsalade_content_downloads_total` | Counter | Download count by status |
-| `fruitsalade_content_uploads_total` | Counter | Upload count by status |
-| `fruitsalade_metadata_tree_size` | Gauge | Files in metadata tree |
-| `fruitsalade_metadata_refresh_duration_seconds` | Histogram | Tree rebuild time |
-| `fruitsalade_auth_attempts_total` | Counter | Auth attempts by result |
-| `fruitsalade_active_tokens` | Gauge | Active JWT tokens |
-| `fruitsalade_db_query_duration_seconds` | Histogram | DB query duration |
-| `fruitsalade_db_connections_open` | Gauge | Open DB connections |
-| `fruitsalade_s3_operation_duration_seconds` | Histogram | S3 operation duration |
-| `fruitsalade_s3_operations_total` | Counter | S3 operations by type/status |
-| `fruitsalade_permission_checks_total` | Counter | Permission checks by result |
-| `fruitsalade_share_downloads_total` | Counter | Share link downloads |
-| `fruitsalade_share_links_active` | Gauge | Active share links |
-| `fruitsalade_quota_exceeded_total` | Counter | Quota exceeded events by type |
-| `fruitsalade_rate_limited_total` | Counter | Rate-limited requests |
+### CI & Deployment
+- [x] GitHub Actions (lint, test, build, Docker)
+- [x] TLS 1.3 support
+- [x] OIDC authentication
+- [x] Token management (revoke/refresh/sessions)
+- [x] Systemd service files
+- [x] Grafana dashboard
 
 ## Configuration
 
@@ -308,11 +88,13 @@ Extend the MVP into a full-featured production system with write support, observ
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `LOG_FORMAT` | `json` | Log format (json, console) |
 | `DATABASE_URL` | (required) | PostgreSQL connection string |
+| `JWT_SECRET` | (required) | JWT signing secret |
+| `STORAGE_BACKEND` | `local` | Storage backend: `local` or `s3` |
+| `LOCAL_STORAGE_PATH` | `/data/storage` | Path for local filesystem storage |
 | `S3_ENDPOINT` | `http://localhost:9000` | S3/MinIO endpoint |
 | `S3_BUCKET` | `fruitsalade` | S3 bucket name |
 | `S3_ACCESS_KEY` | `minioadmin` | S3 access key |
 | `S3_SECRET_KEY` | `minioadmin` | S3 secret key |
-| `JWT_SECRET` | (required) | JWT signing secret |
 | `MAX_UPLOAD_SIZE` | `104857600` | Max upload size (100MB) |
 | `TLS_CERT_FILE` | (empty) | TLS certificate file (enables HTTPS with TLS 1.3) |
 | `TLS_KEY_FILE` | (empty) | TLS private key file |
@@ -326,7 +108,7 @@ Extend the MVP into a full-featured production system with write support, observ
 
 ```bash
 # Build
-make phase2
+make server
 
 # Get auth token
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token \
@@ -338,120 +120,21 @@ curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
   -H "Authorization: Bearer $TOKEN" \
   -d "Hello, World!"
 
-# Upload again (creates version 2)
-curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "Updated content"
-
 # List versions
 curl http://localhost:8080/api/v1/versions/test/hello.txt \
   -H "Authorization: Bearer $TOKEN"
 
-# Download version 1
-curl http://localhost:8080/api/v1/versions/test/hello.txt?v=1 \
-  -H "Authorization: Bearer $TOKEN"
-
-# Rollback to version 1
-curl -X POST http://localhost:8080/api/v1/versions/test/hello.txt \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"version": 1}'
-
 # Upload with conflict detection
 curl -X POST http://localhost:8080/api/v1/content/test/hello.txt \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Expected-Version: 2" \
-  -d "This fails if version changed"
+  -H "X-Expected-Version: 1" \
+  -d "Updated content"
 
 # Check metrics
 curl http://localhost:9090/metrics | grep fruitsalade
 
-# ─── Sharing ───────────────────────────────────────────────────────────
-
-# Create a share link
-curl -X POST http://localhost:8080/api/v1/share/test/hello.txt \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"max_downloads": 5}'
-
-# ─── Admin ─────────────────────────────────────────────────────────────
-
-# List users
-curl http://localhost:8080/api/v1/admin/users \
-  -H "Authorization: Bearer $TOKEN"
-
-# Create user
-curl -X POST http://localhost:8080/api/v1/admin/users \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"bob","password":"secret","is_admin":false}'
-
-# Dashboard stats
-curl http://localhost:8080/api/v1/admin/stats \
-  -H "Authorization: Bearer $TOKEN"
-
-# ─── Groups ───────────────────────────────────────────────────────────
-
-# Create a group
-curl -X POST http://localhost:8080/api/v1/admin/groups \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"engineering","description":"Engineering team"}'
-
-# Create a child group
-curl -X POST http://localhost:8080/api/v1/admin/groups \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"backend","description":"Backend team","parent_id":1}'
-
-# Get group tree
-curl http://localhost:8080/api/v1/admin/groups/tree \
-  -H "Authorization: Bearer $TOKEN"
-
-# Add a member (role: admin, editor, or viewer)
-curl -X POST http://localhost:8080/api/v1/admin/groups/1/members \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":2,"role":"editor"}'
-
-# Update member role
-curl -X PUT http://localhost:8080/api/v1/admin/groups/1/members/2/role \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"role":"admin"}'
-
-# Set group permission on a path
-curl -X PUT http://localhost:8080/api/v1/admin/groups/1/permissions/docs \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"permission":"write"}'
-
-# ─── Visibility ───────────────────────────────────────────────────────
-
-# Set file visibility
-curl -X PUT http://localhost:8080/api/v1/visibility/docs/internal.md \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"visibility":"group","group_id":1}'
-
-# Get file visibility
-curl http://localhost:8080/api/v1/visibility/docs/internal.md \
-  -H "Authorization: Bearer $TOKEN"
-
-# ─── File Properties ─────────────────────────────────────────────────
-
-# Get aggregated file properties
-curl http://localhost:8080/api/v1/properties/test/hello.txt \
-  -H "Authorization: Bearer $TOKEN"
-
-# ─── Version Explorer ────────────────────────────────────────────────
-
-# List all versioned files
-curl http://localhost:8080/api/v1/versions \
-  -H "Authorization: Bearer $TOKEN"
-
-# ─── Admin UI ──────────────────────────────────────────────────────────
-# Open http://localhost:8080/admin/ in a browser
+# Admin UI: http://localhost:8080/admin/
+# Webapp:   http://localhost:8080/app/
 # Login with admin/admin
 ```
 
@@ -461,28 +144,23 @@ curl http://localhost:8080/api/v1/versions \
 
 ```bash
 # Copy service files
-sudo cp phase2/deploy/fruitsalade-server.service /etc/systemd/system/
-sudo cp phase2/deploy/fruitsalade-fuse@.service /etc/systemd/system/
+sudo cp fruitsalade/deploy/fruitsalade-server.service /etc/systemd/system/
+sudo cp fruitsalade/deploy/fruitsalade-fuse@.service /etc/systemd/system/
 
 # Edit environment file
-sudo nano /etc/fruitsalade/server.env   # DATABASE_URL, JWT_SECRET, S3_*, etc.
+sudo nano /etc/fruitsalade/server.env
 
 # Enable and start
 sudo systemctl daemon-reload
 sudo systemctl enable --now fruitsalade-server
-
-# Mount a FUSE client instance (e.g., "work")
 sudo systemctl enable --now fruitsalade-fuse@work
 ```
 
 ### TLS
 
 ```bash
-# Generate self-signed cert (for dev)
 openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
-
-# Start with TLS
-TLS_CERT_FILE=cert.pem TLS_KEY_FILE=key.pem ./bin/phase2-server
+TLS_CERT_FILE=cert.pem TLS_KEY_FILE=key.pem ./bin/server
 ```
 
 ### OIDC (Keycloak example)
@@ -491,21 +169,23 @@ TLS_CERT_FILE=cert.pem TLS_KEY_FILE=key.pem ./bin/phase2-server
 OIDC_ISSUER_URL=https://keycloak.example.com/realms/fruitsalade \
 OIDC_CLIENT_ID=fruitsalade \
 OIDC_CLIENT_SECRET=secret \
-./bin/phase2-server
+./bin/server
 ```
-
-Users authenticating via OIDC are auto-created locally on first login.
 
 ### Grafana Dashboard
 
-Import `phase2/deploy/grafana-dashboard.json` into Grafana, selecting your Prometheus datasource. The dashboard includes panels for HTTP requests, content transfers, S3 operations, auth, sharing, quotas, and database performance.
+Import `fruitsalade/deploy/grafana-dashboard.json` into Grafana, selecting your Prometheus datasource.
 
-## Docker Test Environment
+## Docker
 
 ```bash
-# Start Phase 2 environment (server + postgres + minio + 2 FUSE clients)
-make phase2-test-env
+# Single container (local storage, simplest)
+make single-up
+
+# Multi-container (S3 backend, full test env)
+make test-env
 
 # Stop
-make phase2-test-env-down
+make single-down
+make test-env-down
 ```

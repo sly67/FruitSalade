@@ -6,83 +6,93 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FruitSalade is a self-hosted, Docker-deployable file synchronization system with **on-demand file placeholders** — similar to OneDrive/Dropbox "Files On-Demand" but fully self-hosted. Full specification in `specs.md`.
 
-## Project Structure (Phase-Based)
+## Project Structure
 
 ```
-fruitsalade/
-├── shared/                 # Shared code across all phases
+FruitSalade/
+├── shared/                 # Shared code (reusable across clients)
 │   └── pkg/
+│       ├── cache/          # LRU file cache with pinning
+│       ├── client/         # HTTP client (retry, offline, auth, upload)
+│       ├── fuse/           # FUSE filesystem (read + write ops)
+│       ├── logger/         # Simple logger
 │       ├── models/         # Data types (FileNode, CacheEntry)
-│       └── protocol/       # API request/response types
+│       ├── protocol/       # API request/response types
+│       ├── retry/          # Retry with backoff
+│       └── tree/           # Tree utilities (FindByPath, CacheID, CountNodes)
 │
-├── phase0/                 # PoC - Proof of Concept
+├── fruitsalade/            # Main application
 │   ├── cmd/
-│   │   ├── server/         # Minimal HTTP server
-│   │   └── fuse-client/    # Minimal FUSE client
-│   ├── internal/
-│   │   ├── api/            # HTTP handlers
-│   │   ├── storage/        # Local filesystem backend
-│   │   ├── fuse/           # FUSE implementation
-│   │   └── cache/          # Simple file cache
-│   └── testdata/           # Test files
-│
-├── phase1/                 # MVP - Minimum Viable Product
-│   ├── cmd/
-│   │   ├── server/         # Production server
-│   │   └── fuse-client/    # Production client
-│   ├── internal/
-│   │   ├── storage/s3/     # S3 backend
-│   │   ├── metadata/postgres/
-│   │   └── auth/           # JWT authentication
-│   ├── migrations/         # Database migrations
-│   └── docker/             # Dockerfile, docker-compose
-│
-├── phase2/                 # Production - Full Features
-│   ├── cmd/
-│   │   ├── server/
-│   │   ├── fuse-client/
+│   │   ├── server/         # HTTP server
+│   │   ├── fuse-client/    # Linux FUSE client
+│   │   ├── seed-tool/      # Database/storage seeder
 │   │   └── windows-client/ # Windows CfAPI client
 │   ├── internal/
-│   └── windows/            # C++ CfAPI shim
+│   │   ├── api/            # HTTP handlers, middleware, admin API
+│   │   ├── auth/           # JWT + OIDC authentication
+│   │   ├── config/         # Environment-based configuration
+│   │   ├── events/         # SSE broadcaster
+│   │   ├── logging/        # Structured logging (zap)
+│   │   ├── metadata/postgres/ # PostgreSQL metadata store
+│   │   ├── metrics/        # Prometheus metrics
+│   │   ├── quota/          # Rate limiting and user quotas
+│   │   ├── sharing/        # Permissions, share links, groups
+│   │   ├── storage/        # Multi-backend storage router
+│   │   │   ├── s3/         # S3/MinIO backend
+│   │   │   ├── local/      # Local filesystem backend
+│   │   │   └── smb/        # SMB/CIFS backend
+│   │   ├── webdav/         # WebDAV handler
+│   │   └── winclient/      # Windows client core
+│   ├── migrations/         # PostgreSQL migrations (001-007)
+│   ├── docker/             # Dockerfiles and compose files
+│   ├── deploy/             # Systemd units, Grafana dashboard
+│   ├── ui/                 # Admin UI (go:embed)
+│   ├── webapp/             # Webapp file browser (go:embed)
+│   ├── windows/            # C++ CfAPI shim
+│   └── testdata/           # Seed data for Docker environments
 │
-├── go.work                 # Go workspace (links all phases)
-├── Makefile                # Build targets per phase
-└── PLAN.md                 # Detailed task breakdown
+├── go.work                 # Go workspace (links shared + fruitsalade)
+└── Makefile                # Build targets
 ```
 
 ## Build Commands
 
 ```bash
-# Phase 0 (PoC)
-make phase0              # Build server + FUSE client
-make phase0-server       # Build server only
-make phase0-fuse         # Build FUSE client only
-make phase0-test         # Run tests
-make phase0-run-server   # Run server locally
+# Build
+make server          # Build server binary
+make fuse            # Build FUSE client binary
+make seed            # Build seed tool
+make winclient       # Build Windows client (native, cgofuse)
+make windows         # Cross-compile Windows client (requires CGO)
 
-# Phase 1 (MVP)
-make phase1              # Build all
-make phase1-docker       # Build Docker image
-make phase1-up           # Start Docker services (postgres, minio, server)
-make phase1-down         # Stop Docker services
+# Test
+make test            # Run all tests
+make test-shared     # Run shared package tests
+make test-app        # Run app tests
 
-# Phase 2 (Production)
-make phase2              # Build all
-make phase2-windows      # Build Windows client (requires CGO)
+# Docker (multi-container, S3 backend)
+make docker          # Build all Docker images
+make test-env        # Start full test env (postgres + minio + server + 2 clients)
+make test-env-down   # Stop test env + remove volumes
+
+# Docker (single container, local storage)
+make single          # Build single-container Docker image
+make single-up       # Start single-container (compose)
+make single-down     # Stop single-container
+make single-run      # Run single container (docker run)
 
 # Utilities
-make test                # Test all phases
-make lint                # Lint all code
-make fmt                 # Format all code
-make clean               # Remove build artifacts
-make help                # Show all targets
+make lint            # Lint all code
+make fmt             # Format all code
+make clean           # Remove build artifacts
+make deps            # Download dependencies
 ```
 
 ## Technology Stack
 
 | Component | Language | Key Libraries |
 |-----------|----------|---------------|
-| Server | Go | net/http or Gin, sqlx, aws-sdk-go-v2 |
+| Server | Go | net/http, sqlx, aws-sdk-go-v2 |
 | Linux Client | Go | hanwen/go-fuse v2 |
 | Windows Client | Go + C++ | Go core + CfAPI shim via CGO |
 
@@ -115,14 +125,16 @@ GET /health                → health check
 ## Key Interfaces
 
 ```go
-// Storage backend (server) - internal/storage/storage.go
-type Storage interface {
-    GetMetadata(ctx context.Context, path string) (*models.FileNode, error)
-    GetContent(ctx context.Context, id string, offset, length int64) (io.ReadCloser, int64, error)
-    ListDir(ctx context.Context, path string) ([]*models.FileNode, error)
+// Storage backend - fruitsalade/internal/storage/backend.go
+type Backend interface {
+    PutObject(ctx context.Context, key string, r io.Reader, size int64) error
+    GetObject(ctx context.Context, key string) (io.ReadCloser, error)
+    GetObjectRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error)
+    DeleteObject(ctx context.Context, key string) error
+    StatObject(ctx context.Context, key string) (int64, error)
 }
 
-// Cache (client) - internal/cache/cache.go
+// Cache (client) - shared/pkg/cache/cache.go
 type Cache interface {
     Get(fileID string) (path string, ok bool)
     Put(fileID string, r io.Reader, size int64) (path string, error)
@@ -132,20 +144,16 @@ type Cache interface {
 }
 ```
 
-## Development Workflow
-
-1. **Start with Phase 0** — get PoC working first
-2. **Test locally** — server serves files, FUSE client mounts and fetches
-3. **Validate E2E** — `ls` shows files, `cat` fetches, cache works
-4. **Move to Phase 1** — add PostgreSQL, S3, auth
-5. **Phase 2** — Windows client, metrics, admin UI
-
 ## Known Pitfalls
 
 - Do NOT use WebDAV mounts (poor performance, no placeholders)
 - Do NOT conflate metadata sync with content transfer
 - Do NOT fetch content in `Getattr` — breaks `ls`, `find`, `du`
 - Do NOT assume offline access works — fail gracefully
+- Sub-packages (s3, local, smb) CANNOT import parent `storage` pkg (import cycle)
+- FUSE Create: Set dirty=false initially; shell redirections trigger early Flush before Write
+- UploadFile closes readers: Go HTTP client closes io.ReadCloser bodies. Use io.NewSectionReader
+- Metadata tree sync: Write ops must update both n.metadata AND FruitFS.metadata tree
 
 ## Reference Code
 
