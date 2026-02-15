@@ -7,7 +7,7 @@ CACHE_DIR="${CACHE_DIR:-/var/cache/fruitsalade}"
 USERNAME="${USERNAME:-admin}"
 PASSWORD="${PASSWORD:-admin}"
 
-echo "FruitSalade Phase 2 client starting (read/write)..."
+echo "FruitSalade client starting (read/write)..."
 echo "  Server: $SERVER_URL"
 echo "  Mount:  $MOUNT_POINT"
 echo "  Cache:  $CACHE_DIR"
@@ -36,7 +36,7 @@ if [ -z "$TOKEN" ]; then
 fi
 echo "Authenticated successfully."
 
-# Run Phase 2 FUSE client (foreground, read/write)
+# Run FUSE client (foreground, read/write)
 exec /app/fuse-client \
     -mount "$MOUNT_POINT" \
     -server "$SERVER_URL" \

@@ -34,8 +34,8 @@ type FileRow struct {
 	IsDir        bool
 	Hash         string
 	S3Key        string
-	Version      int    // Phase 2: versioning support
-	OwnerID      *int   // Phase 2: file ownership
+	Version      int
+	OwnerID      *int
 	Visibility   string // "public", "group", "private"
 	GroupID      *int
 	StorageLocID *int // Storage location ID (NULL = default)

@@ -1,4 +1,4 @@
-// Package api provides the HTTP server and handlers for Phase 2.
+// Package api provides the HTTP server and handlers.
 package api
 
 import (
@@ -35,7 +35,7 @@ import (
 	"github.com/fruitsalade/fruitsalade/shared/pkg/protocol"
 )
 
-// Server is the Phase 2 HTTP server.
+// Server is the HTTP server.
 type Server struct {
 	metadata      *postgres.Store
 	storageRouter *storage.Router
@@ -61,7 +61,7 @@ type Server struct {
 	locationStore *storage.LocationStore
 }
 
-// NewServer creates a new Phase 2 server.
+// NewServer creates a new server.
 func NewServer(
 	metadata *postgres.Store,
 	storageRouter *storage.Router,

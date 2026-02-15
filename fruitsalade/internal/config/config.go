@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-// Config holds all Phase 2 server configuration.
+// Config holds all server configuration.
 type Config struct {
 	// Server
 	ListenAddr  string
