@@ -25,6 +25,7 @@ import (
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/auth"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/config"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/events"
+	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/gallery"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/logging"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/metadata/postgres"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/metrics"
@@ -172,16 +173,34 @@ func main() {
 			zap.String("name", locName))
 	}
 
+	// Initialize gallery subsystem
+	galleryStore := gallery.NewGalleryStore(db)
+	pluginCaller := gallery.NewPluginCaller()
+	processor := gallery.NewProcessor(galleryStore, storageRouter, pluginCaller, 2)
+	processor.Start(ctx)
+	defer processor.Stop()
+
+	galleryDeps := &api.GalleryDeps{
+		Store:        galleryStore,
+		Processor:    processor,
+		PluginCaller: pluginCaller,
+	}
+	logging.Info("gallery subsystem initialized")
+
 	// Create API server
 	srv := api.NewServer(
 		metaStore, storageRouter, authHandler, cfg.MaxUploadSize,
 		broadcaster, permissionStore, shareLinkStore,
 		quotaStore, rateLimiter, groupStore, cfg,
 		provisioner, locationStore,
+		galleryDeps,
 	)
 	if err := srv.Init(ctx); err != nil {
 		logging.Fatal("server init failed", zap.Error(err))
 	}
+
+	// Backfill gallery: process any existing unprocessed images
+	go processor.ProcessExisting(ctx)
 
 	// Start metrics server
 	metricsServer := &http.Server{

@@ -23,6 +23,7 @@ import (
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/auth"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/config"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/events"
+	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/gallery"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/logging"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/metadata/postgres"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/metrics"
@@ -67,6 +68,18 @@ type Server struct {
 
 	// Storage admin
 	locationStore *storage.LocationStore
+
+	// Gallery
+	galleryStore *gallery.GalleryStore
+	processor    *gallery.Processor
+	pluginCaller *gallery.PluginCaller
+}
+
+// GalleryDeps bundles the gallery subsystem dependencies.
+type GalleryDeps struct {
+	Store        *gallery.GalleryStore
+	Processor    *gallery.Processor
+	PluginCaller *gallery.PluginCaller
 }
 
 // NewServer creates a new server.
@@ -84,8 +97,9 @@ func NewServer(
 	cfg *config.Config,
 	provisioner *sharing.Provisioner,
 	locationStore *storage.LocationStore,
+	galleryDeps *GalleryDeps,
 ) *Server {
-	return &Server{
+	s := &Server{
 		metadata:      metadata,
 		storageRouter: storageRouter,
 		auth:          authHandler,
@@ -100,6 +114,12 @@ func NewServer(
 		config:        cfg,
 		locationStore: locationStore,
 	}
+	if galleryDeps != nil {
+		s.galleryStore = galleryDeps.Store
+		s.processor = galleryDeps.Processor
+		s.pluginCaller = galleryDeps.PluginCaller
+	}
+	return s
 }
 
 // Init initializes the server by building the metadata tree.
@@ -239,6 +259,28 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /api/v1/admin/storage/{id}/test", s.handleTestStorageLocation)
 	protected.HandleFunc("POST /api/v1/admin/storage/{id}/default", s.handleSetDefaultStorage)
 	protected.HandleFunc("GET /api/v1/admin/storage/{id}/stats", s.handleStorageStats)
+
+	// Gallery endpoints
+	if s.galleryStore != nil {
+		protected.HandleFunc("GET /api/v1/gallery/search", s.handleGallerySearch)
+		protected.HandleFunc("GET /api/v1/gallery/thumb/{path...}", s.handleGalleryThumb)
+		protected.HandleFunc("GET /api/v1/gallery/metadata/{path...}", s.handleGalleryMetadata)
+		protected.HandleFunc("GET /api/v1/gallery/albums/date", s.handleAlbumsByDate)
+		protected.HandleFunc("GET /api/v1/gallery/albums/location", s.handleAlbumsByLocation)
+		protected.HandleFunc("GET /api/v1/gallery/albums/camera", s.handleAlbumsByCamera)
+		protected.HandleFunc("POST /api/v1/gallery/tags/{path...}", s.handleAddTag)
+		protected.HandleFunc("DELETE /api/v1/gallery/tags/{path...}", s.handleRemoveTag)
+		protected.HandleFunc("GET /api/v1/gallery/tags", s.handleListTags)
+		protected.HandleFunc("GET /api/v1/gallery/stats", s.handleGalleryStats)
+
+		// Admin gallery plugin endpoints
+		protected.HandleFunc("GET /api/v1/admin/gallery/plugins", s.handleListPlugins)
+		protected.HandleFunc("POST /api/v1/admin/gallery/plugins", s.handleCreatePlugin)
+		protected.HandleFunc("PUT /api/v1/admin/gallery/plugins/{id}", s.handleUpdatePlugin)
+		protected.HandleFunc("DELETE /api/v1/admin/gallery/plugins/{id}", s.handleDeletePlugin)
+		protected.HandleFunc("POST /api/v1/admin/gallery/plugins/{id}/test", s.handleTestPlugin)
+		protected.HandleFunc("POST /api/v1/admin/gallery/reprocess", s.handleReprocessGallery)
+	}
 
 	// File properties endpoint
 	protected.HandleFunc("GET /api/v1/properties/{path...}", s.handleFileProperties)
@@ -830,6 +872,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	s.publishEvent(eventType, path, newVersion, hashStr, int64(len(content)))
 
+	// Gallery: enqueue image processing if applicable
+	if s.processor != nil && gallery.IsImageFile(path) {
+		s.processor.Enqueue(path)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -975,6 +1022,17 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 			"deleted": deleted,
 		})
 	} else {
+		// Gallery: cleanup thumbnail before deleting file
+		if s.galleryStore != nil {
+			thumbKey := s.galleryStore.GetThumbKey(r.Context(), path)
+			if thumbKey != "" {
+				if defaultBackend, _, err := s.storageRouter.GetDefault(); err == nil && defaultBackend != nil {
+					defaultBackend.DeleteObject(r.Context(), thumbKey)
+				}
+			}
+			s.galleryStore.DeleteMetadata(r.Context(), path)
+		}
+
 		// Delete file from storage
 		s3Key := strings.TrimPrefix(path, "/")
 		backend, _, _ := s.storageRouter.ResolveForFile(r.Context(), fileRow.StorageLocID, fileRow.GroupID)

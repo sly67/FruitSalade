@@ -167,6 +167,7 @@ func TestMain(m *testing.M) {
 		broadcaster, permissionStore, shareLinkStore,
 		quotaStore, rateLimiter, groupStore, testCfg,
 		provisioner, locationStore,
+		nil, // gallery deps
 	)
 	if err := srv.Init(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "SKIP: server init failed: %v\n", err)

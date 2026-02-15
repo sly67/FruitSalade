@@ -1,21 +1,23 @@
 // SPA hash router
 (function() {
     var routes = {
-        'login':        renderLogin,
-        'browser':      renderBrowser,
-        'versions':     renderVersions,
-        'shares':       renderShares,
-        'viewer':       renderViewer,
-        'dashboard':    renderDashboard,
-        'users':        renderUsers,
-        'admin-shares': renderAdminShares,
-        'groups':       renderGroups,
-        'settings':     renderSettings,
-        'storage':      renderStorage
+        'login':            renderLogin,
+        'browser':          renderBrowser,
+        'versions':         renderVersions,
+        'shares':           renderShares,
+        'viewer':           renderViewer,
+        'dashboard':        renderDashboard,
+        'users':            renderUsers,
+        'admin-shares':     renderAdminShares,
+        'groups':           renderGroups,
+        'settings':         renderSettings,
+        'storage':          renderStorage,
+        'gallery':          renderGallery,
+        'gallery-plugins':  renderGalleryPlugins
     };
 
     // Admin-only routes
-    var adminRoutes = ['users', 'groups', 'admin-shares', 'settings', 'storage'];
+    var adminRoutes = ['users', 'groups', 'admin-shares', 'settings', 'storage', 'gallery-plugins'];
 
     // Mobile state
     var isMobile = false;
@@ -149,7 +151,7 @@
         }
         // Highlight More tab if current route is an admin/more route
         var moreTab = document.getElementById('tab-more');
-        var moreRoutes = ['shares', 'users', 'groups', 'storage', 'admin-shares', 'settings'];
+        var moreRoutes = ['shares', 'users', 'groups', 'storage', 'gallery-plugins', 'admin-shares', 'settings'];
         if (moreRoutes.indexOf(route) !== -1) {
             moreTab.classList.add('active');
         } else {
@@ -180,6 +182,7 @@
             items.push({ route: 'users', icon: '&#128100;', label: 'Users' });
             items.push({ route: 'groups', icon: '&#128101;', label: 'Groups' });
             items.push({ route: 'storage', icon: '&#128190;', label: 'Storage' });
+            items.push({ route: 'gallery-plugins', icon: '&#127912;', label: 'Gallery Plugins' });
             items.push({ route: 'admin-shares', icon: '&#128279;', label: 'Admin Shares' });
             items.push({ route: 'settings', icon: '&#9881;', label: 'Settings' });
         }

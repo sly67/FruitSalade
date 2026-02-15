@@ -190,5 +190,14 @@ var FileTypes = (function() {
         return '<span class="file-icon file-icon-default">&#128196;</span>';
     }
 
-    return { detect: detect, isText: isText, icon: icon, getExt: getExt };
+    var galleryImageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif',
+        '.heic', '.heif', '.avif',
+        '.cr2', '.cr3', '.nef', '.arw', '.dng', '.orf', '.rw2', '.pef', '.srw', '.raf'];
+
+    function isGalleryImage(filename) {
+        var ext = getExt(filename);
+        return galleryImageExts.indexOf(ext) !== -1;
+    }
+
+    return { detect: detect, isText: isText, icon: icon, getExt: getExt, isGalleryImage: isGalleryImage };
 })();

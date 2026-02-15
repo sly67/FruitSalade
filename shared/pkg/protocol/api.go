@@ -267,3 +267,146 @@ type StorageTestResponse struct {
 	BackendType string `json:"backend_type,omitempty"`
 	Error       string `json:"error,omitempty"`
 }
+
+// ─── Gallery Types ──────────────────────────────────────────────────────────
+
+// GallerySearchResponse is returned by GET /api/v1/gallery/search.
+type GallerySearchResponse struct {
+	Items      []GalleryItem `json:"items"`
+	Total      int           `json:"total"`
+	Offset     int           `json:"offset"`
+	Limit      int           `json:"limit"`
+	HasMore    bool          `json:"has_more"`
+}
+
+// GalleryItem represents a single image in gallery search results.
+type GalleryItem struct {
+	FilePath     string     `json:"file_path"`
+	FileName     string     `json:"file_name"`
+	Size         int64      `json:"size"`
+	ModTime      time.Time  `json:"mod_time"`
+	Hash         string     `json:"hash,omitempty"`
+	Width        int        `json:"width,omitempty"`
+	Height       int        `json:"height,omitempty"`
+	CameraMake   string     `json:"camera_make,omitempty"`
+	CameraModel  string     `json:"camera_model,omitempty"`
+	DateTaken    *time.Time `json:"date_taken,omitempty"`
+	Latitude     *float64   `json:"latitude,omitempty"`
+	Longitude    *float64   `json:"longitude,omitempty"`
+	LocationCity string     `json:"location_city,omitempty"`
+	Country      string     `json:"location_country,omitempty"`
+	HasThumbnail bool       `json:"has_thumbnail"`
+	Tags         []string   `json:"tags,omitempty"`
+}
+
+// GalleryMetadataResponse is returned by GET /api/v1/gallery/metadata/{path}.
+type GalleryMetadataResponse struct {
+	FilePath        string     `json:"file_path"`
+	FileName        string     `json:"file_name"`
+	Size            int64      `json:"size"`
+	Width           int        `json:"width,omitempty"`
+	Height          int        `json:"height,omitempty"`
+	CameraMake      string     `json:"camera_make,omitempty"`
+	CameraModel     string     `json:"camera_model,omitempty"`
+	LensModel       string     `json:"lens_model,omitempty"`
+	FocalLength     float32    `json:"focal_length,omitempty"`
+	Aperture        float32    `json:"aperture,omitempty"`
+	ShutterSpeed    string     `json:"shutter_speed,omitempty"`
+	ISO             int        `json:"iso,omitempty"`
+	Flash           bool       `json:"flash,omitempty"`
+	DateTaken       *time.Time `json:"date_taken,omitempty"`
+	Latitude        *float64   `json:"latitude,omitempty"`
+	Longitude       *float64   `json:"longitude,omitempty"`
+	Altitude        *float32   `json:"altitude,omitempty"`
+	LocationCountry string     `json:"location_country,omitempty"`
+	LocationCity    string     `json:"location_city,omitempty"`
+	LocationName    string     `json:"location_name,omitempty"`
+	Orientation     int        `json:"orientation"`
+	HasThumbnail    bool       `json:"has_thumbnail"`
+	Status          string     `json:"status"`
+	Tags            []TagInfo  `json:"tags"`
+}
+
+// TagInfo describes a tag with its source and confidence.
+type TagInfo struct {
+	Tag        string  `json:"tag"`
+	Confidence float32 `json:"confidence"`
+	Source     string  `json:"source"`
+}
+
+// DateAlbum groups images by year and month.
+type DateAlbum struct {
+	Year   int          `json:"year"`
+	Months []MonthCount `json:"months"`
+}
+
+// MonthCount is a month with an image count.
+type MonthCount struct {
+	Month int `json:"month"`
+	Count int `json:"count"`
+}
+
+// LocationAlbum groups images by country and city.
+type LocationAlbum struct {
+	Country string      `json:"country"`
+	Cities  []CityCount `json:"cities"`
+}
+
+// CityCount is a city with an image count.
+type CityCount struct {
+	City  string `json:"city"`
+	Count int    `json:"count"`
+}
+
+// CameraAlbum groups images by camera make and model.
+type CameraAlbum struct {
+	Make   string       `json:"make"`
+	Models []ModelCount `json:"models"`
+}
+
+// ModelCount is a camera model with an image count.
+type ModelCount struct {
+	Model string `json:"model"`
+	Count int    `json:"count"`
+}
+
+// TagCountResponse is returned by GET /api/v1/gallery/tags.
+type TagCountResponse struct {
+	Tag   string `json:"tag"`
+	Count int    `json:"count"`
+}
+
+// GalleryStatsResponse is returned by GET /api/v1/gallery/stats.
+type GalleryStatsResponse struct {
+	TotalImages int `json:"total_images"`
+	WithGPS     int `json:"with_gps"`
+	WithTags    int `json:"with_tags"`
+	Processed   int `json:"processed"`
+	Pending     int `json:"pending"`
+}
+
+// TagRequest is the body for POST /api/v1/gallery/tags/{path}.
+type TagRequest struct {
+	Tag string `json:"tag"`
+}
+
+// PluginRequest is the body for POST/PUT /api/v1/admin/gallery/plugins.
+type PluginRequest struct {
+	Name       string                 `json:"name"`
+	WebhookURL string                `json:"webhook_url"`
+	Enabled    bool                   `json:"enabled"`
+	Config     map[string]interface{} `json:"config,omitempty"`
+}
+
+// PluginResponse is returned by plugin admin endpoints.
+type PluginResponse struct {
+	ID         int                    `json:"id"`
+	Name       string                 `json:"name"`
+	WebhookURL string                `json:"webhook_url"`
+	Enabled    bool                   `json:"enabled"`
+	Config     map[string]interface{} `json:"config,omitempty"`
+	LastHealth *time.Time             `json:"last_health,omitempty"`
+	LastError  string                 `json:"last_error,omitempty"`
+	CreatedAt  time.Time              `json:"created_at"`
+	UpdatedAt  time.Time              `json:"updated_at"`
+}
