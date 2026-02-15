@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# Single-container entrypoint: PostgreSQL + FruitSalade server
+# Single-container entrypoint: PostgreSQL + FruitSalade server + optional FUSE client
 #
 # Environment variables:
 #   POSTGRES_USER     (default: fruitsalade)
@@ -11,6 +11,11 @@ set -e
 #   JWT_SECRET        (required)
 #   STORAGE_BACKEND   (default: local)
 #   LOCAL_STORAGE_PATH (default: /data/storage)
+#   ENABLE_FUSE       (default: false) - start FUSE client and mount at FUSE_MOUNT
+#   FUSE_MOUNT        (default: /mnt/fruitsalade)
+#   FUSE_CACHE        (default: /var/cache/fruitsalade)
+#   FUSE_USER         (default: admin)
+#   FUSE_PASSWORD     (default: admin)
 
 PGDATA="/data/postgres"
 PGUSER="${POSTGRES_USER:-fruitsalade}"
@@ -76,6 +81,9 @@ fi
 
 # ---- 7. Trap signals for graceful shutdown ----
 cleanup() {
+    echo "[shutdown] Stopping FUSE client..."
+    kill "$FUSE_PID" 2>/dev/null || true
+    wait "$FUSE_PID" 2>/dev/null || true
     echo "[shutdown] Stopping server..."
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
@@ -90,6 +98,50 @@ trap cleanup TERM INT
 echo "[init] Starting FruitSalade server..."
 /app/server &
 SERVER_PID=$!
+
+# ---- 9. Optionally start FUSE client ----
+FUSE_PID=""
+if [ "${ENABLE_FUSE}" = "true" ]; then
+    FUSE_MOUNT="${FUSE_MOUNT:-/mnt/fruitsalade}"
+    FUSE_CACHE="${FUSE_CACHE:-/var/cache/fruitsalade}"
+    FUSE_USER="${FUSE_USER:-admin}"
+    FUSE_PASSWORD="${FUSE_PASSWORD:-admin}"
+
+    echo "[init] Waiting for server to be ready..."
+    for i in $(seq 1 30); do
+        if curl -sf http://127.0.0.1:8080/health > /dev/null 2>&1; then
+            echo "[init] Server is ready."
+            break
+        fi
+        if [ "$i" = "30" ]; then
+            echo "[init] WARNING: Server not ready after 30s, starting FUSE client anyway."
+        fi
+        sleep 1
+    done
+
+    # Authenticate and get JWT token
+    echo "[init] Authenticating FUSE client as $FUSE_USER..."
+    RESPONSE=$(curl -sf -X POST http://127.0.0.1:8080/api/v1/auth/token \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"$FUSE_USER\",\"password\":\"$FUSE_PASSWORD\",\"device_name\":\"fuse-local\"}" 2>/dev/null || echo "")
+
+    TOKEN=$(echo "$RESPONSE" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+
+    if [ -n "$TOKEN" ]; then
+        echo "[init] Starting FUSE client at $FUSE_MOUNT..."
+        /app/fuse-client \
+            -mount "$FUSE_MOUNT" \
+            -server http://127.0.0.1:8080 \
+            -cache "$FUSE_CACHE" \
+            -token "$TOKEN" \
+            -watch &
+        FUSE_PID=$!
+        echo "[init] FUSE client started (PID $FUSE_PID)."
+    else
+        echo "[init] WARNING: Failed to get auth token for FUSE client. Skipping FUSE mount."
+        echo "[init] Response: $RESPONSE"
+    fi
+fi
 
 # Wait for server process (forward signals)
 wait "$SERVER_PID"

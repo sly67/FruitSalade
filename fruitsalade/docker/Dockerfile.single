@@ -1,10 +1,13 @@
-# Single-container Dockerfile: PostgreSQL 16 + FruitSalade server
+# Single-container Dockerfile: PostgreSQL 16 + FruitSalade server + FUSE client
 #
 # Bundles everything in one Alpine container with local filesystem storage.
 # No external dependencies (no MinIO/S3 required).
 #
+# The FUSE client is optional: set ENABLE_FUSE=true to auto-mount at /mnt/fruitsalade.
+#
 # Build:  docker build -t fruitsalade:single -f fruitsalade/docker/Dockerfile.single .
 # Run:    docker run -p 8080:8080 -p 9090:9090 -e JWT_SECRET=changeme fruitsalade:single
+# With FUSE: docker run --cap-add SYS_ADMIN --device /dev/fuse -e ENABLE_FUSE=true ...
 
 # =============================================================================
 # Builder stage
@@ -20,11 +23,12 @@ COPY go.work ./
 COPY shared/ ./shared/
 COPY fruitsalade/ ./fruitsalade/
 
-# Build server and seed tool
+# Build server, seed tool, and FUSE client
 WORKDIR /build/fruitsalade
 ENV GOWORK=off
 RUN go build -o /bin/server ./cmd/server
 RUN go build -o /bin/seed-tool ./cmd/seed-tool
+RUN go build -o /bin/fuse-client ./cmd/fuse-client
 
 # =============================================================================
 # Runtime stage
@@ -36,13 +40,16 @@ RUN apk add --no-cache \
     postgresql16-contrib \
     su-exec \
     ca-certificates \
-    tzdata
+    tzdata \
+    fuse3 \
+    curl
 
 WORKDIR /app
 
 # Copy binaries
 COPY --from=builder /bin/server /app/server
 COPY --from=builder /bin/seed-tool /app/seed-tool
+COPY --from=builder /bin/fuse-client /app/fuse-client
 
 # Migrations
 COPY fruitsalade/migrations/ /app/migrations/
@@ -51,7 +58,7 @@ COPY fruitsalade/migrations/ /app/migrations/
 COPY fruitsalade/testdata/ /app/testdata/
 
 # Prepare directories
-RUN mkdir -p /data/postgres /data/storage /run/postgresql && \
+RUN mkdir -p /data/postgres /data/storage /run/postgresql /mnt/fruitsalade /var/cache/fruitsalade && \
     chown -R postgres:postgres /data/postgres /run/postgresql
 
 # Entrypoint script
