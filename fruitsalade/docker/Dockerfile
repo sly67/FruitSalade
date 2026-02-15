@@ -1,5 +1,12 @@
-# FruitSalade Multi-Target Dockerfile
-# Builds: server, seed-tool, fuse-client
+# FruitSalade Docker
+#
+# Two targets:
+#   server  - All-in-one: PostgreSQL 16 + API server + seed tool + FUSE client
+#   client  - Standalone FUSE client (for test/remote machines)
+#
+# Build:
+#   docker build -t fruitsalade:server --target server -f fruitsalade/docker/Dockerfile .
+#   docker build -t fruitsalade:client --target client -f fruitsalade/docker/Dockerfile .
 
 # =============================================================================
 # Builder stage
@@ -15,51 +22,58 @@ COPY go.work ./
 COPY shared/ ./shared/
 COPY fruitsalade/ ./fruitsalade/
 
-# Build server, FUSE client, and seed tool
+# Build all binaries
 WORKDIR /build/fruitsalade
 ENV GOWORK=off
 RUN go build -o /bin/server ./cmd/server
-RUN go build -o /bin/fuse-client ./cmd/fuse-client
 RUN go build -o /bin/seed-tool ./cmd/seed-tool
+RUN go build -o /bin/fuse-client ./cmd/fuse-client
 
 # =============================================================================
-# Server target
+# Server target: PostgreSQL + API server + seed + FUSE client
 # =============================================================================
 FROM alpine:3.19 AS server
 
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk add --no-cache \
+    postgresql16 \
+    postgresql16-contrib \
+    su-exec \
+    ca-certificates \
+    tzdata \
+    fuse3 \
+    curl
 
 WORKDIR /app
 
+# Copy all binaries
 COPY --from=builder /bin/server /app/server
+COPY --from=builder /bin/seed-tool /app/seed-tool
+COPY --from=builder /bin/fuse-client /app/fuse-client
+
+# Migrations and seed data
 COPY fruitsalade/migrations/ /app/migrations/
+COPY fruitsalade/testdata/ /app/testdata/
+
+# Prepare directories
+RUN mkdir -p /data/postgres /data/storage /run/postgresql /mnt/fruitsalade /var/cache/fruitsalade && \
+    chown -R postgres:postgres /data/postgres /run/postgresql
+
+# Entrypoint script
+COPY fruitsalade/docker/entrypoint-single.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8080 9090
+VOLUME ["/data/postgres", "/data/storage"]
 
-HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=5 \
+HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=5 \
     CMD wget -q --spider http://localhost:8080/health || exit 1
 
-ENTRYPOINT ["/app/server"]
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # =============================================================================
-# Seed target (backend-agnostic seed tool)
+# Client target: standalone FUSE client
 # =============================================================================
-FROM alpine:3.19 AS seed
-
-RUN apk --no-cache add ca-certificates tzdata
-
-WORKDIR /app
-
-COPY --from=builder /bin/seed-tool /app/seed-tool
-COPY fruitsalade/migrations/ /app/migrations/
-COPY fruitsalade/testdata/ /testdata/
-
-ENTRYPOINT ["/app/seed-tool"]
-
-# =============================================================================
-# FUSE client target (read/write)
-# =============================================================================
-FROM alpine:3.19 AS fuse-client
+FROM alpine:3.19 AS client
 
 RUN apk --no-cache add ca-certificates tzdata fuse3 curl
 

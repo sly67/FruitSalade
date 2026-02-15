@@ -1,43 +1,63 @@
-# FruitSalade Docker Test Environment (S3 backend)
+# FruitSalade Docker Environment
 #
 # Services:
-#   postgres    - PostgreSQL metadata store
+#   server      - All-in-one: embedded PostgreSQL + API server + seed + FUSE client
 #   minio       - S3-compatible object storage
 #   minio-init  - Creates the S3 bucket (runs once)
-#   seed        - Runs base migrations + seeds test data (runs once)
-#   server      - FruitSalade API server
-#   client-a    - FUSE client machine A (read/write)
-#   client-b    - FUSE client machine B (read/write)
+#   client-a    - FUSE test client A (read/write)
+#   client-b    - FUSE test client B (read/write)
+#
+# The server has its own embedded PostgreSQL and can use either local or S3 storage.
+# MinIO is provided for S3 backend testing.
 #
 # Usage: docker compose -f fruitsalade/docker/docker-compose.yml up -d
 
 services:
   # ---------------------------------------------------------------------------
-  # Infrastructure
+  # Server (PostgreSQL + API server + seed + FUSE)
   # ---------------------------------------------------------------------------
-  postgres:
-    image: postgres:16-alpine
+  server:
+    build:
+      context: ../..
+      dockerfile: fruitsalade/docker/Dockerfile
+      target: server
     ports:
-      - "48004:5432"
+      - "8080:8080"
+      - "9090:9090"
     environment:
+      # PostgreSQL (embedded)
       POSTGRES_USER: fruitsalade
       POSTGRES_PASSWORD: fruitsalade
       POSTGRES_DB: fruitsalade
+      # Server
+      JWT_SECRET: test-secret
+      STORAGE_BACKEND: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: fruitsalade
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      LOG_LEVEL: info
+      LOG_FORMAT: console
+      SEED_DATA: "true"
+      # FUSE (optional, inside server container)
+      ENABLE_FUSE: "false"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fruitsalade"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - pg_data:/data/postgres
+      - storage_data:/data/storage
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # S3 Storage
+  # ---------------------------------------------------------------------------
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     ports:
-      - "48002:9000"
-      - "48003:9001"
+      - "9000:9000"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -50,9 +70,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # Init containers (run once)
-  # ---------------------------------------------------------------------------
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -65,58 +82,14 @@ services:
       exit 0;
       "
 
-  seed:
-    build:
-      context: ../..
-      dockerfile: fruitsalade/docker/Dockerfile
-      target: seed
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-    environment:
-      DATABASE_URL: postgres://fruitsalade:fruitsalade@postgres:5432/fruitsalade?sslmode=disable
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: fruitsalade
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      JWT_SECRET: test-secret
-
   # ---------------------------------------------------------------------------
-  # Application
-  # ---------------------------------------------------------------------------
-  server:
-    build:
-      context: ../..
-      dockerfile: fruitsalade/docker/Dockerfile
-      target: server
-    ports:
-      - "48000:8080"
-      - "48001:9090"
-    environment:
-      DATABASE_URL: postgres://fruitsalade:fruitsalade@postgres:5432/fruitsalade?sslmode=disable
-      STORAGE_BACKEND: s3
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: fruitsalade
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      JWT_SECRET: test-secret
-      LOG_LEVEL: info
-      LOG_FORMAT: console
-    depends_on:
-      seed:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # FUSE Clients (read/write)
+  # Test FUSE Clients (read/write)
   # ---------------------------------------------------------------------------
   client-a:
     build:
       context: ../..
       dockerfile: fruitsalade/docker/Dockerfile
-      target: fuse-client
+      target: client
     environment:
       SERVER_URL: http://server:8080
       MOUNT_POINT: /mnt/fruitsalade
@@ -140,7 +113,7 @@ services:
     build:
       context: ../..
       dockerfile: fruitsalade/docker/Dockerfile
-      target: fuse-client
+      target: client
     environment:
       SERVER_URL: http://server:8080
       MOUNT_POINT: /mnt/fruitsalade
@@ -161,7 +134,8 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres_data:
+  pg_data:
   minio_data:
+  storage_data:
   cache_client_a:
   cache_client_b:

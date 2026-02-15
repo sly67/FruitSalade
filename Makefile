@@ -45,58 +45,43 @@ test-app:
 	cd fruitsalade && go test ./...
 
 #==============================================================================
-# DOCKER - Multi-container (S3 backend)
+# DOCKER
 #==============================================================================
-.PHONY: docker test-env test-env-down test-env-logs exec-a exec-b
+.PHONY: docker docker-up docker-down docker-logs docker-run exec-a exec-b exec-server
 
 docker:
 	@echo "Building Docker images..."
 	docker build -t fruitsalade:server --target server -f fruitsalade/docker/Dockerfile .
-	docker build -t fruitsalade:seed --target seed -f fruitsalade/docker/Dockerfile .
-	docker build -t fruitsalade:fuse --target fuse-client -f fruitsalade/docker/Dockerfile .
+	docker build -t fruitsalade:client --target client -f fruitsalade/docker/Dockerfile .
 
-test-env:
-	@echo "Starting test environment (postgres + minio + server + 2 clients)..."
+docker-up:
+	@echo "Starting environment (server + minio + 2 clients)..."
 	docker compose -f fruitsalade/docker/docker-compose.yml up -d --build
 
-test-env-down:
-	@echo "Stopping test environment and removing volumes..."
+docker-down:
+	@echo "Stopping environment and removing volumes..."
 	docker compose -f fruitsalade/docker/docker-compose.yml down -v
 
-test-env-logs:
+docker-logs:
 	docker compose -f fruitsalade/docker/docker-compose.yml logs -f
+
+docker-run:
+	@echo "Running server standalone (local storage, no S3)..."
+	docker run --rm -p 8080:8080 -p 9090:9090 \
+		-e JWT_SECRET=change-me-in-production \
+		-e SEED_DATA=true \
+		-v fruitsalade_pg:/data/postgres \
+		-v fruitsalade_storage:/data/storage \
+		fruitsalade:server
+
+exec-server:
+	docker compose -f fruitsalade/docker/docker-compose.yml exec server sh
 
 exec-a:
 	docker compose -f fruitsalade/docker/docker-compose.yml exec client-a sh
 
 exec-b:
 	docker compose -f fruitsalade/docker/docker-compose.yml exec client-b sh
-
-#==============================================================================
-# DOCKER - Single container (local storage)
-#==============================================================================
-.PHONY: single single-up single-down single-run
-
-single:
-	@echo "Building single-container Docker image..."
-	docker build -t fruitsalade:single -f fruitsalade/docker/Dockerfile.single .
-
-single-up:
-	@echo "Starting single-container deployment..."
-	docker compose -f fruitsalade/docker/docker-compose.single.yml up -d --build
-
-single-down:
-	@echo "Stopping single-container deployment..."
-	docker compose -f fruitsalade/docker/docker-compose.single.yml down
-
-single-run:
-	@echo "Running single container (docker run)..."
-	docker run --rm -p 8080:8080 -p 9090:9090 \
-		-e JWT_SECRET=change-me-in-production \
-		-e SEED_DATA=true \
-		-v fruitsalade_pg:/data/postgres \
-		-v fruitsalade_storage:/data/storage \
-		fruitsalade:single
 
 #==============================================================================
 # UTILITIES
@@ -139,22 +124,17 @@ help:
 	@echo "  make test-shared     Run shared package tests"
 	@echo "  make test-app        Run app tests"
 	@echo ""
-	@echo "Docker (multi-container, S3 backend):"
-	@echo "  make docker          Build all Docker images"
-	@echo "  make test-env        Start full test env (build + up)"
-	@echo "  make test-env-down   Stop test env + remove volumes"
-	@echo "  make test-env-logs   Follow logs from test env"
+	@echo "Docker:"
+	@echo "  make docker          Build server + client Docker images"
+	@echo "  make docker-up       Start full env (server + minio + 2 clients)"
+	@echo "  make docker-down     Stop env + remove volumes"
+	@echo "  make docker-logs     Follow logs"
+	@echo "  make docker-run      Run server standalone (local storage, no S3)"
+	@echo "  make exec-server     Shell into server"
 	@echo "  make exec-a          Shell into client-a"
 	@echo "  make exec-b          Shell into client-b"
 	@echo ""
-	@echo "Docker (single container, local storage):"
-	@echo "  make single          Build single-container Docker image"
-	@echo "  make single-up       Start single-container (compose)"
-	@echo "  make single-down     Stop single-container"
-	@echo "  make single-run      Run single container (docker run)"
-	@echo ""
 	@echo "Utilities:"
-	@echo "  make test            Run all tests"
 	@echo "  make lint            Lint all code"
 	@echo "  make fmt             Format all code"
 	@echo "  make clean           Remove build artifacts"
