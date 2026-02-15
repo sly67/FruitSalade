@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/api"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/auth"
@@ -220,11 +221,13 @@ func main() {
 
 	// Start periodic metrics update
 	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			default:
+			case <-ticker.C:
 				metaStore.UpdateConnectionMetrics()
 			}
 		}
