@@ -25,9 +25,9 @@ COPY fruitsalade/ ./fruitsalade/
 # Build binaries
 WORKDIR /build/fruitsalade
 ENV GOWORK=off
-RUN go build -o /bin/server ./cmd/server
-RUN go build -o /bin/seed-tool ./cmd/seed-tool
-RUN go build -o /bin/fuse-client ./cmd/fuse-client  # client target only
+RUN go build -ldflags="-s -w" -trimpath -o /bin/server ./cmd/server
+RUN go build -ldflags="-s -w" -trimpath -o /bin/seed-tool ./cmd/seed-tool
+RUN go build -ldflags="-s -w" -trimpath -o /bin/fuse-client ./cmd/fuse-client  # client target only
 
 # =============================================================================
 # Server target: PostgreSQL + API server + seed tool

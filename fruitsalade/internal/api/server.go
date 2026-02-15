@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -33,6 +34,14 @@ import (
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/protocol"
 )
+
+// Package-level compiled regex for Range header parsing.
+var rangeRegex = regexp.MustCompile(`bytes=(\d*)-(\d*)`)
+
+// Pool gzip writers to reduce allocations on tree/subtree endpoints.
+var gzipPool = sync.Pool{
+	New: func() any { return gzip.NewWriter(nil) },
+}
 
 // Server is the HTTP server.
 type Server struct {
@@ -348,9 +357,11 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	if acceptsGzip(r) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Encoding", "gzip")
-		gw := gzip.NewWriter(w)
-		defer gw.Close()
+		gw := gzipPool.Get().(*gzip.Writer)
+		gw.Reset(w)
 		json.NewEncoder(gw).Encode(resp)
+		gw.Close()
+		gzipPool.Put(gw)
 		return
 	}
 
@@ -384,9 +395,11 @@ func (s *Server) handleSubtree(w http.ResponseWriter, r *http.Request) {
 	if acceptsGzip(r) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Encoding", "gzip")
-		gw := gzip.NewWriter(w)
-		defer gw.Close()
+		gw := gzipPool.Get().(*gzip.Writer)
+		gw.Reset(w)
 		json.NewEncoder(gw).Encode(resp)
+		gw.Close()
+		gzipPool.Put(gw)
 		return
 	}
 
@@ -1808,6 +1821,13 @@ func (g *gzipResponseWriter) Write(data []byte) (int, error) {
 	return g.gw.Write(data)
 }
 
+func (g *gzipResponseWriter) Flush() {
+	g.gw.Flush()
+	if f, ok := g.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func acceptsGzip(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
 }
@@ -1817,8 +1837,7 @@ func parseRangeHeader(rangeHeader string, totalSize int64) (offset, length int64
 		return 0, totalSize, false
 	}
 
-	re := regexp.MustCompile(`bytes=(\d*)-(\d*)`)
-	matches := re.FindStringSubmatch(rangeHeader)
+	matches := rangeRegex.FindStringSubmatch(rangeHeader)
 	if matches == nil {
 		return 0, totalSize, false
 	}

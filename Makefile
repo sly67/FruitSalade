@@ -10,24 +10,24 @@ all: server fuse
 
 server:
 	@echo "Building Server..."
-	cd fruitsalade && go build -o ../bin/server ./cmd/server
+	cd fruitsalade && go build -ldflags="-s -w" -trimpath -o ../bin/server ./cmd/server
 
 fuse:
 	@echo "Building FUSE Client..."
-	cd fruitsalade && go build -o ../bin/fuse-client ./cmd/fuse-client
+	cd fruitsalade && go build -ldflags="-s -w" -trimpath -o ../bin/fuse-client ./cmd/fuse-client
 
 seed:
 	@echo "Building Seed Tool..."
-	cd fruitsalade && go build -o ../bin/seed-tool ./cmd/seed-tool
+	cd fruitsalade && go build -ldflags="-s -w" -trimpath -o ../bin/seed-tool ./cmd/seed-tool
 
 winclient:
 	@echo "Building Windows Client (cgofuse, native)..."
-	cd fruitsalade && go build -o ../bin/winclient ./cmd/windows-client
+	cd fruitsalade && go build -ldflags="-s -w" -trimpath -o ../bin/winclient ./cmd/windows-client
 
 windows:
 	@echo "Building Windows Client (cross-compile for Windows)..."
 	@echo "Requires: Windows build environment with CGO"
-	cd fruitsalade && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -o ../bin/windows-client.exe ./cmd/windows-client
+	cd fruitsalade && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -ldflags="-s -w" -trimpath -o ../bin/windows-client.exe ./cmd/windows-client
 
 #==============================================================================
 # TEST

@@ -233,6 +233,25 @@ func main() {
 		}
 	}()
 
+	// Start periodic cleanup (rate limiter buckets + old bandwidth records)
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				rateLimiter.Cleanup(24 * time.Hour)
+				if n, err := quotaStore.CleanupOldBandwidth(ctx, 90*24*time.Hour); err != nil {
+					logging.Error("bandwidth cleanup failed", zap.Error(err))
+				} else if n > 0 {
+					logging.Info("cleaned old bandwidth records", zap.Int64("count", n))
+				}
+			}
+		}
+	}()
+
 	if useTLS {
 		logging.Info("server listening (TLS 1.3)",
 			zap.String("addr", cfg.ListenAddr),

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lib/pq"
+
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/metrics"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
 )
@@ -104,23 +106,25 @@ func (s *PermissionStore) CheckAccess(ctx context.Context, userID int, path stri
 		return true
 	}
 
-	// Check direct and inherited permissions
+	// Check direct and inherited permissions in a single query.
 	// Build path segments: /a/b/c -> ["/a/b/c", "/a/b", "/a", "/"]
 	segments := PathSegments(path)
 
-	for _, seg := range segments {
-		var perm string
-		err := s.db.QueryRowContext(ctx,
-			`SELECT permission FROM file_permissions
-			 WHERE user_id = $1 AND path = $2`,
-			userID, seg).Scan(&perm)
-		if err != nil {
-			continue
-		}
-
-		if PermissionSatisfies(perm, requiredPerm) {
-			metrics.RecordPermissionCheck(true)
-			return true
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT path, permission FROM file_permissions
+		 WHERE user_id = $1 AND path = ANY($2)`,
+		userID, pq.Array(segments))
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var segPath, perm string
+			if err := rows.Scan(&segPath, &perm); err != nil {
+				continue
+			}
+			if PermissionSatisfies(perm, requiredPerm) {
+				metrics.RecordPermissionCheck(true)
+				return true
+			}
 		}
 	}
 

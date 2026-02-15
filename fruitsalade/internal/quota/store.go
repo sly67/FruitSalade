@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -17,29 +18,65 @@ type Quota struct {
 	MaxUploadSizeBytes int64
 }
 
+type cachedQuota struct {
+	quota   *Quota
+	expires time.Time
+}
+
 // QuotaStore manages user quotas and usage tracking.
 type QuotaStore struct {
-	db *sql.DB
+	db    *sql.DB
+	mu    sync.RWMutex
+	cache map[int]*cachedQuota
+	ttl   time.Duration
 }
 
 // NewQuotaStore creates a new quota store.
 func NewQuotaStore(db *sql.DB) *QuotaStore {
-	return &QuotaStore{db: db}
+	return &QuotaStore{
+		db:    db,
+		cache: make(map[int]*cachedQuota),
+		ttl:   5 * time.Minute,
+	}
+}
+
+// InvalidateQuotaCache removes a user's cached quota (call after SetQuota).
+func (s *QuotaStore) InvalidateQuotaCache(userID int) {
+	s.mu.Lock()
+	delete(s.cache, userID)
+	s.mu.Unlock()
 }
 
 // GetQuota returns the quota for a user. Returns zero-value quota if none set.
+// Results are cached for 5 minutes to avoid DB hits on every request.
 func (s *QuotaStore) GetQuota(ctx context.Context, userID int) (*Quota, error) {
+	// Check cache first
+	s.mu.RLock()
+	if cached, ok := s.cache[userID]; ok && time.Now().Before(cached.expires) {
+		s.mu.RUnlock()
+		return cached.quota, nil
+	}
+	s.mu.RUnlock()
+
 	q := &Quota{UserID: userID}
 	err := s.db.QueryRowContext(ctx,
 		`SELECT max_storage_bytes, max_bandwidth_per_day, max_requests_per_minute, max_upload_size_bytes
 		 FROM user_quotas WHERE user_id = $1`, userID).
 		Scan(&q.MaxStorageBytes, &q.MaxBandwidthPerDay, &q.MaxRequestsPerMin, &q.MaxUploadSizeBytes)
 	if err == sql.ErrNoRows {
-		return q, nil // Zero-value = unlimited
+		// Cache zero-value too (most users have no quota row)
+		s.mu.Lock()
+		s.cache[userID] = &cachedQuota{quota: q, expires: time.Now().Add(s.ttl)}
+		s.mu.Unlock()
+		return q, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get quota: %w", err)
 	}
+
+	s.mu.Lock()
+	s.cache[userID] = &cachedQuota{quota: q, expires: time.Now().Add(s.ttl)}
+	s.mu.Unlock()
 	return q, nil
 }
 
@@ -58,6 +95,7 @@ func (s *QuotaStore) SetQuota(ctx context.Context, q *Quota) error {
 	if err != nil {
 		return fmt.Errorf("set quota: %w", err)
 	}
+	s.InvalidateQuotaCache(q.UserID)
 	return nil
 }
 
