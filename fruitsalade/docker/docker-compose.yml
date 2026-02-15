@@ -10,6 +10,8 @@
 # The server has its own embedded PostgreSQL and can use either local or S3 storage.
 # MinIO is provided for S3 backend testing.
 #
+# Ports: 48000 (server), 48001 (metrics), 48002 (minio), 48003 (minio console)
+#
 # Usage: docker compose -f fruitsalade/docker/docker-compose.yml up -d
 
 services:
@@ -22,8 +24,8 @@ services:
       dockerfile: fruitsalade/docker/Dockerfile
       target: server
     ports:
-      - "8080:8080"
-      - "9090:9090"
+      - "48000:8080"
+      - "48001:9090"
     environment:
       # PostgreSQL (embedded)
       POSTGRES_USER: fruitsalade
@@ -54,8 +56,8 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "48002:9000"
+      - "48003:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin

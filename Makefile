@@ -67,7 +67,7 @@ docker-logs:
 
 docker-run:
 	@echo "Running server standalone (local storage, no S3)..."
-	docker run --rm -p 8080:8080 -p 9090:9090 \
+	docker run --rm -p 48000:8080 -p 48001:9090 \
 		-e JWT_SECRET=change-me-in-production \
 		-e SEED_DATA=true \
 		-v fruitsalade_pg:/data/postgres \

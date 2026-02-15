@@ -23,11 +23,11 @@ if [ ! -f "$PGDATA/PG_VERSION" ]; then
     echo "[init] Initializing PostgreSQL data directory..."
     su-exec postgres initdb -D "$PGDATA" --auth=trust --encoding=UTF8 --locale=C
 
-    # Configure pg_hba.conf for local + TCP connections
+    # Configure pg_hba.conf for local + TCP connections (single container, localhost only)
     cat > "$PGDATA/pg_hba.conf" <<EOF
 local   all   all                 trust
-host    all   all   127.0.0.1/32  md5
-host    all   all   ::1/128       md5
+host    all   all   127.0.0.1/32  trust
+host    all   all   ::1/128       trust
 EOF
 
     # Listen on localhost only (single container)
