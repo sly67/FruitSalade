@@ -1,7 +1,7 @@
 # FruitSalade Docker Environment
 #
 # Services:
-#   server      - All-in-one: embedded PostgreSQL + API server + seed + FUSE client
+#   server      - All-in-one: embedded PostgreSQL + API server + seed tool
 #   minio       - S3-compatible object storage
 #   minio-init  - Creates the S3 bucket (runs once)
 #   client-a    - FUSE test client A (read/write)
@@ -14,7 +14,7 @@
 
 services:
   # ---------------------------------------------------------------------------
-  # Server (PostgreSQL + API server + seed + FUSE)
+  # Server (PostgreSQL + API server + seed tool)
   # ---------------------------------------------------------------------------
   server:
     build:
@@ -39,8 +39,6 @@ services:
       LOG_LEVEL: info
       LOG_FORMAT: console
       SEED_DATA: "true"
-      # FUSE (optional, inside server container)
-      ENABLE_FUSE: "false"
     volumes:
       - pg_data:/data/postgres
       - storage_data:/data/storage

@@ -1,7 +1,7 @@
 # FruitSalade Docker
 #
 # Two targets:
-#   server  - All-in-one: PostgreSQL 16 + API server + seed tool + FUSE client
+#   server  - All-in-one: PostgreSQL 16 + API server + seed tool
 #   client  - Standalone FUSE client (for test/remote machines)
 #
 # Build:
@@ -22,15 +22,15 @@ COPY go.work ./
 COPY shared/ ./shared/
 COPY fruitsalade/ ./fruitsalade/
 
-# Build all binaries
+# Build binaries
 WORKDIR /build/fruitsalade
 ENV GOWORK=off
 RUN go build -o /bin/server ./cmd/server
 RUN go build -o /bin/seed-tool ./cmd/seed-tool
-RUN go build -o /bin/fuse-client ./cmd/fuse-client
+RUN go build -o /bin/fuse-client ./cmd/fuse-client  # client target only
 
 # =============================================================================
-# Server target: PostgreSQL + API server + seed + FUSE client
+# Server target: PostgreSQL + API server + seed tool
 # =============================================================================
 FROM alpine:3.19 AS server
 
@@ -40,22 +40,20 @@ RUN apk add --no-cache \
     su-exec \
     ca-certificates \
     tzdata \
-    fuse3 \
     curl
 
 WORKDIR /app
 
-# Copy all binaries
+# Copy server binaries
 COPY --from=builder /bin/server /app/server
 COPY --from=builder /bin/seed-tool /app/seed-tool
-COPY --from=builder /bin/fuse-client /app/fuse-client
 
 # Migrations and seed data
 COPY fruitsalade/migrations/ /app/migrations/
 COPY fruitsalade/testdata/ /app/testdata/
 
 # Prepare directories
-RUN mkdir -p /data/postgres /data/storage /run/postgresql /mnt/fruitsalade /var/cache/fruitsalade && \
+RUN mkdir -p /data/postgres /data/storage /run/postgresql && \
     chown -R postgres:postgres /data/postgres /run/postgresql
 
 # Entrypoint script
