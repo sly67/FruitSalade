@@ -70,16 +70,15 @@ make test            # Run all tests
 make test-shared     # Run shared package tests
 make test-app        # Run app tests
 
-# Docker (multi-container, S3 backend)
-make docker          # Build all Docker images
-make test-env        # Start full test env (postgres + minio + server + 2 clients)
-make test-env-down   # Stop test env + remove volumes
-
-# Docker (single container, local storage)
-make single          # Build single-container Docker image
-make single-up       # Start single-container (compose)
-make single-down     # Stop single-container
-make single-run      # Run single container (docker run)
+# Docker
+make docker          # Build server + client Docker images
+make docker-up       # Start full env (server + minio + 2 clients)
+make docker-down     # Stop env + remove volumes
+make docker-logs     # Follow logs
+make docker-run      # Run server standalone (local storage, no S3)
+make exec-server     # Shell into server
+make exec-a          # Shell into client-a
+make exec-b          # Shell into client-b
 
 # Utilities
 make lint            # Lint all code

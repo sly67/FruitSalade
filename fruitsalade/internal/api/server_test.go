@@ -5,7 +5,7 @@
 // if the TEST_DATABASE_URL environment variable is not set.
 //
 // Quick start with Docker:
-//   make test-env
+//   make docker-up
 //   TEST_DATABASE_URL="postgres://fruitsalade:fruitsalade@localhost:48004/fruitsalade_test?sslmode=disable" \
 //   TEST_S3_ENDPOINT="http://localhost:48002" \
 //   go test -v -count=1 ./fruitsalade/internal/api/

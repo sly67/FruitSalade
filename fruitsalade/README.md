@@ -179,13 +179,12 @@ Import `fruitsalade/deploy/grafana-dashboard.json` into Grafana, selecting your 
 ## Docker
 
 ```bash
-# Single container (local storage, simplest)
-make single-up
+# Full environment (server + minio + 2 FUSE clients)
+make docker-up
 
-# Multi-container (S3 backend, full test env)
-make test-env
+# Server standalone (local storage, no S3)
+make docker-run
 
 # Stop
-make single-down
-make test-env-down
+make docker-down
 ```

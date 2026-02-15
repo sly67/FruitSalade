@@ -65,25 +65,34 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 
 ## Quick Start
 
-### Docker Test Environment (recommended)
+### Docker (recommended)
 
 ```bash
-make test-env
+make docker-up
 ```
 
-This starts PostgreSQL, MinIO, seeds test data, launches the server, and mounts two independent FUSE clients.
+This starts the all-in-one server (embedded PostgreSQL + API + seed + FUSE), MinIO for S3 storage, and two independent FUSE test clients.
 
 ```bash
 # Verify both clients see the same files
 docker compose -f fruitsalade/docker/docker-compose.yml exec client-a ls /mnt/fruitsalade
 docker compose -f fruitsalade/docker/docker-compose.yml exec client-b cat /mnt/fruitsalade/hello.txt
 
-# Shell into a client
+# Shell into server or clients
+make exec-server
 make exec-a
 
 # Tear down
-make test-env-down
+make docker-down
 ```
+
+### Standalone Server (no S3)
+
+```bash
+make docker-run
+```
+
+Runs the server with local filesystem storage (no MinIO/S3 needed). Data persists in Docker volumes.
 
 ### Local Development
 
@@ -320,18 +329,15 @@ make seed              # Build seed tool
 make winclient         # Build Windows client (native, cgofuse)
 make windows           # Cross-compile Windows client (requires CGO)
 
-# Docker (multi-container, S3 backend)
-make docker            # Build all Docker images
-make test-env          # Start full test env (postgres + minio + server + 2 clients)
-make test-env-down     # Stop test env + remove volumes
+# Docker
+make docker            # Build server + client Docker images
+make docker-up         # Start full env (server + minio + 2 clients)
+make docker-down       # Stop env + remove volumes
+make docker-logs       # Follow logs
+make docker-run        # Run server standalone (local storage, no S3)
+make exec-server       # Shell into server
 make exec-a            # Shell into client-a
 make exec-b            # Shell into client-b
-
-# Docker (single container, local storage)
-make single            # Build single-container Docker image
-make single-up         # Start single-container (compose)
-make single-down       # Stop single-container
-make single-run        # Run single container (docker run)
 
 # Utilities
 make test              # Run all tests
