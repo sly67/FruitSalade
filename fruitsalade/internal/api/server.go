@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"mime"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -170,8 +172,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/share/{token}", s.handleShareDownload)
 
 	// Web app (no auth — the app handles login via API)
-	appFS, _ := fs.Sub(webapp.Assets, ".")
-	mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.FS(appFS))))
+	// WEBAPP_DIR overrides embedded assets for live-reload during development
+	var appHandler http.Handler
+	if dir := os.Getenv("WEBAPP_DIR"); dir != "" {
+		log.Printf("[webapp] serving from disk: %s", dir)
+		appHandler = http.StripPrefix("/app/", http.FileServer(http.Dir(dir)))
+	} else {
+		appFS, _ := fs.Sub(webapp.Assets, ".")
+		appHandler = http.StripPrefix("/app/", http.FileServer(http.FS(appFS)))
+	}
+	mux.Handle("/app/", appHandler)
 	mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
 	})

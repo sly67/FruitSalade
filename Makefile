@@ -1,5 +1,7 @@
 .PHONY: all clean test help
 
+GO ?= $(shell which go 2>/dev/null || echo /usr/local/go/bin/go)
+
 # Default target
 all: server fuse
 
@@ -10,24 +12,24 @@ all: server fuse
 
 server:
 	@echo "Building Server..."
-	cd fruitsalade && go build -ldflags="-s -w" -trimpath -o ../bin/server ./cmd/server
+	cd fruitsalade && $(GO) build -ldflags="-s -w" -trimpath -o ../bin/server ./cmd/server
 
 fuse:
 	@echo "Building FUSE Client..."
-	cd fruitsalade && go build -ldflags="-s -w" -trimpath -o ../bin/fuse-client ./cmd/fuse-client
+	cd fruitsalade && $(GO) build -ldflags="-s -w" -trimpath -o ../bin/fuse-client ./cmd/fuse-client
 
 seed:
 	@echo "Building Seed Tool..."
-	cd fruitsalade && go build -ldflags="-s -w" -trimpath -o ../bin/seed-tool ./cmd/seed-tool
+	cd fruitsalade && $(GO) build -ldflags="-s -w" -trimpath -o ../bin/seed-tool ./cmd/seed-tool
 
 winclient:
 	@echo "Building Windows Client (cgofuse, native)..."
-	cd fruitsalade && go build -ldflags="-s -w" -trimpath -o ../bin/winclient ./cmd/windows-client
+	cd fruitsalade && $(GO) build -ldflags="-s -w" -trimpath -o ../bin/winclient ./cmd/windows-client
 
 windows:
 	@echo "Building Windows Client (cross-compile for Windows)..."
 	@echo "Requires: Windows build environment with CGO"
-	cd fruitsalade && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -ldflags="-s -w" -trimpath -o ../bin/windows-client.exe ./cmd/windows-client
+	cd fruitsalade && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 $(GO) build -ldflags="-s -w" -trimpath -o ../bin/windows-client.exe ./cmd/windows-client
 
 #==============================================================================
 # TEST
@@ -38,16 +40,16 @@ test: test-shared test-app
 
 test-shared:
 	@echo "Testing Shared package..."
-	cd shared && go test ./...
+	cd shared && $(GO) test ./...
 
 test-app:
 	@echo "Testing FruitSalade..."
-	cd fruitsalade && go test ./...
+	cd fruitsalade && $(GO) test ./...
 
 #==============================================================================
 # DOCKER
 #==============================================================================
-.PHONY: docker docker-up docker-down docker-logs docker-run exec-a exec-b exec-server
+.PHONY: docker docker-up docker-down docker-logs docker-run docker-deploy exec-a exec-b exec-server
 
 docker:
 	@echo "Building Docker images..."
@@ -74,6 +76,20 @@ docker-run:
 		-v fruitsalade_storage:/data/storage \
 		fruitsalade:server
 
+COMPOSE=docker compose -f fruitsalade/docker/docker-compose.yml
+SERVER_CONTAINER=$$($(COMPOSE) ps -q server)
+
+docker-deploy:
+	@echo "Building server binary (static, for container)..."
+	cd fruitsalade && CGO_ENABLED=0 $(GO) build -ldflags="-s -w" -trimpath -o ../bin/server ./cmd/server
+	@echo "Copying binary into running container..."
+	docker cp bin/server $(SERVER_CONTAINER):/app/server
+	@echo "Copying migrations..."
+	docker cp fruitsalade/migrations/. $(SERVER_CONTAINER):/app/migrations/
+	@echo "Restarting server..."
+	$(COMPOSE) restart server
+	@echo "Deploy complete — no image rebuild."
+
 exec-server:
 	docker compose -f fruitsalade/docker/docker-compose.yml exec server sh
 
@@ -94,8 +110,8 @@ clean:
 
 lint:
 	@echo "Linting..."
-	cd shared && go vet ./...
-	cd fruitsalade && go vet ./...
+	cd shared && $(GO) vet ./...
+	cd fruitsalade && $(GO) vet ./...
 
 fmt:
 	@echo "Formatting..."
@@ -103,8 +119,8 @@ fmt:
 
 deps:
 	@echo "Downloading dependencies..."
-	cd shared && go mod download
-	cd fruitsalade && go mod download
+	cd shared && $(GO) mod download
+	cd fruitsalade && $(GO) mod download
 
 #==============================================================================
 # HELP
@@ -130,6 +146,7 @@ help:
 	@echo "  make docker-down     Stop env + remove volumes"
 	@echo "  make docker-logs     Follow logs"
 	@echo "  make docker-run      Run server standalone (local storage, no S3)"
+	@echo "  make docker-deploy   Build + copy binary into running container (no rebuild)"
 	@echo "  make exec-server     Shell into server"
 	@echo "  make exec-a          Shell into client-a"
 	@echo "  make exec-b          Shell into client-b"
