@@ -790,6 +790,10 @@ func (s *Server) handleCreateAlbum(w http.ResponseWriter, r *http.Request) {
 
 	album, err := s.galleryStore.CreateAlbum(r.Context(), claims.UserID, req.Name, req.Description)
 	if err != nil {
+		if err == gallery.ErrAlbumExists {
+			s.sendError(w, http.StatusConflict, "an album with this name already exists")
+			return
+		}
 		s.sendError(w, http.StatusInternalServerError, "failed to create album: "+err.Error())
 		return
 	}
@@ -840,6 +844,10 @@ func (s *Server) handleUpdateAlbum(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.galleryStore.UpdateAlbum(r.Context(), id, req.Name, req.Description); err != nil {
+		if err == gallery.ErrAlbumExists {
+			s.sendError(w, http.StatusConflict, "an album with this name already exists")
+			return
+		}
 		s.sendError(w, http.StatusInternalServerError, "failed to update album: "+err.Error())
 		return
 	}

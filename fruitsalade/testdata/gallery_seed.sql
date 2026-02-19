@@ -104,7 +104,11 @@ INSERT INTO user_albums (user_id, name, description, cover_path) VALUES
   (1, 'Paris 2024',       'Our trip to Paris, June 2024',       '/photos/paris_01.jpg'),
   (1, 'Tokyo 2024',       'Tokyo adventures, September 2024',   '/photos/tokyo_01.jpg'),
   (1, 'Best Landscapes',  'Favorite landscape shots',           '/photos/nature_01.jpg'),
-  (1, 'Family',           'Family moments',                     '/photos/family_01.jpg');
+  (1, 'Family',           'Family moments',                     '/photos/family_01.jpg')
+ON CONFLICT (user_id, name) DO UPDATE SET
+  description = EXCLUDED.description,
+  cover_path = EXCLUDED.cover_path,
+  updated_at = NOW();
 
 -- ─── Album Images ────────────────────────────────────────────────────────────
 -- Paris 2024 album (id will be assigned sequentially)

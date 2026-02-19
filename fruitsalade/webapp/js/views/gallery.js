@@ -1764,10 +1764,11 @@ function renderGallery() {
         var container = document.getElementById('lb-albums-container');
         if (!container) return;
 
-        API.get('/api/v1/gallery/image-albums/' + API.encodeURIPath(item.file_path.replace(/^\//, ''))).then(function(albums) {
-            renderLightboxAlbums(container, albums || [], item);
+        API.get('/api/v1/gallery/image-albums/' + API.encodeURIPath(item.file_path.replace(/^\//, ''))).then(function(data) {
+            var albums = Array.isArray(data) ? data : [];
+            renderLightboxAlbums(container, albums, item);
         }).catch(function() {
-            container.innerHTML = '<span class="lightbox-tags-empty">Failed to load</span>';
+            container.innerHTML = '<span class="lightbox-tags-empty">Failed to load albums</span>';
         });
     }
 
@@ -1788,7 +1789,7 @@ function renderGallery() {
         // Populate album dropdown with user's albums
         var sel = document.getElementById('lb-album-select');
         API.get('/api/v1/gallery/albums').then(function(allAlbums) {
-            if (!allAlbums) return;
+            if (!Array.isArray(allAlbums)) return;
             for (var j = 0; j < allAlbums.length; j++) {
                 var opt = document.createElement('option');
                 opt.value = String(allAlbums[j].id);

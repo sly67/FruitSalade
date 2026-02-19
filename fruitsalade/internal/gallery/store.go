@@ -448,10 +448,22 @@ type AlbumSummary struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// CreateAlbum inserts a new user album.
+// ErrAlbumExists is returned when an album with the same name already exists for the user.
+var ErrAlbumExists = fmt.Errorf("album with this name already exists")
+
+// CreateAlbum inserts a new user album. Returns ErrAlbumExists if duplicate.
 func (s *GalleryStore) CreateAlbum(ctx context.Context, userID int, name, description string) (*Album, error) {
+	// Check for existing album with same name
+	var existingID int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM user_albums WHERE user_id = $1 AND name = $2`, userID, name,
+	).Scan(&existingID)
+	if err == nil {
+		return nil, ErrAlbumExists
+	}
+
 	a := &Album{UserID: userID, Name: name, Description: description}
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO user_albums (user_id, name, description)
 		VALUES ($1, $2, $3)
 		RETURNING id, created_at, updated_at`,
@@ -463,9 +475,19 @@ func (s *GalleryStore) CreateAlbum(ctx context.Context, userID int, name, descri
 	return a, nil
 }
 
-// UpdateAlbum updates an album's name and description.
+// UpdateAlbum updates an album's name and description. Returns ErrAlbumExists on name conflict.
 func (s *GalleryStore) UpdateAlbum(ctx context.Context, albumID int, name, description string) error {
-	_, err := s.db.ExecContext(ctx, `
+	// Check for existing album with same name (different ID, same user)
+	var existingID int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM user_albums WHERE user_id = (SELECT user_id FROM user_albums WHERE id = $1) AND name = $2 AND id != $1`,
+		albumID, name,
+	).Scan(&existingID)
+	if err == nil {
+		return ErrAlbumExists
+	}
+
+	_, err = s.db.ExecContext(ctx, `
 		UPDATE user_albums SET name = $1, description = $2, updated_at = NOW()
 		WHERE id = $3`, name, description, albumID)
 	return err

@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS user_albums (
     description TEXT NOT NULL DEFAULT '',
     cover_path TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS album_images (
