@@ -1170,6 +1170,10 @@ function renderGallery() {
                     '<div class="gallery-album-card-name">' + esc(tc.tag) + '</div>' +
                     '<div class="gallery-album-card-meta">' + tc.count + ' image' + (tc.count !== 1 ? 's' : '') + '</div>' +
                 '</div>' +
+                '<div class="gallery-album-card-actions">' +
+                    '<button class="btn btn-xs btn-outline" data-action="rename-tag" data-tag="' + esc(tc.tag) + '" title="Rename">&#9998;</button>' +
+                    '<button class="btn btn-xs btn-danger" data-action="delete-tag" data-tag="' + esc(tc.tag) + '" title="Delete">&times;</button>' +
+                '</div>' +
             '</div>';
         }
         html += '</div>';
@@ -1182,15 +1186,33 @@ function renderGallery() {
             if (coverPath) loadThumb(coverImgs[ci], coverPath);
         }
 
-        // Wire tag card clicks
+        // Wire tag card clicks (ignore if clicking action buttons)
         var cards = container.querySelectorAll('.gallery-tag-card');
         for (var cc = 0; cc < cards.length; cc++) {
             (function(card) {
-                card.addEventListener('click', function() {
+                card.addEventListener('click', function(e) {
+                    if (e.target.closest('[data-action]')) return;
                     var tag = card.getAttribute('data-tag');
                     enterTagView(tag);
                 });
             })(cards[cc]);
+        }
+
+        // Wire rename/delete action buttons
+        var actionBtns = container.querySelectorAll('[data-action]');
+        for (var ab = 0; ab < actionBtns.length; ab++) {
+            (function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    var action = btn.getAttribute('data-action');
+                    var tagName = btn.getAttribute('data-tag');
+                    if (action === 'rename-tag') {
+                        showSettingsRenameModal(tagName, 'user');
+                    } else if (action === 'delete-tag') {
+                        settingsDeleteTag(tagName, 'user');
+                    }
+                });
+            })(actionBtns[ab]);
         }
     }
 
@@ -1474,6 +1496,7 @@ function renderGallery() {
                             Modal.close();
                             if (scope === 'global') loadSettingsGlobalTags();
                             else loadSettingsUserTags();
+                            if (currentPage === 'tags') renderTagsPage();
                         });
                     } else {
                         return resp.json().then(function(d) { Toast.error(d.error || 'Failed'); });
@@ -1500,6 +1523,7 @@ function renderGallery() {
                         Toast.success('Tag deleted (' + (data.affected || 0) + ' images affected)');
                         if (scope === 'global') loadSettingsGlobalTags();
                         else loadSettingsUserTags();
+                        if (currentPage === 'tags') renderTagsPage();
                     });
                 } else {
                     return resp.json().then(function(d) { Toast.error(d.error || 'Failed'); });
