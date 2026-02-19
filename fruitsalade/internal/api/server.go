@@ -168,7 +168,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /api/v1/auth/token", s.auth.HandleLogin)
 
-	// Public share link download (no auth)
+	// Public share link endpoints (no auth)
+	mux.HandleFunc("GET /api/v1/share/{token}/info", s.handleShareInfo)
 	mux.HandleFunc("GET /api/v1/share/{token}", s.handleShareDownload)
 
 	// Web app (no auth — the app handles login via API)
@@ -183,6 +184,11 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.Handle("/app/", appHandler)
 	mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
+	})
+
+	// Redirect root to /app/
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/app/", http.StatusMovedPermanently)
 	})
 
@@ -282,6 +288,18 @@ func (s *Server) Handler() http.Handler {
 		protected.HandleFunc("DELETE /api/v1/gallery/tags/{path...}", s.handleRemoveTag)
 		protected.HandleFunc("GET /api/v1/gallery/tags", s.handleListTags)
 		protected.HandleFunc("GET /api/v1/gallery/stats", s.handleGalleryStats)
+		protected.HandleFunc("GET /api/v1/gallery/map/points", s.handleGalleryMapPoints)
+
+		// Custom album endpoints
+		protected.HandleFunc("GET /api/v1/gallery/albums", s.handleListUserAlbums)
+		protected.HandleFunc("POST /api/v1/gallery/albums", s.handleCreateAlbum)
+		protected.HandleFunc("PUT /api/v1/gallery/albums/{id}", s.handleUpdateAlbum)
+		protected.HandleFunc("DELETE /api/v1/gallery/albums/{id}", s.handleDeleteAlbum)
+		protected.HandleFunc("GET /api/v1/gallery/albums/{id}/images", s.handleGetAlbumImages)
+		protected.HandleFunc("POST /api/v1/gallery/albums/{id}/images", s.handleAddImageToAlbum)
+		protected.HandleFunc("DELETE /api/v1/gallery/albums/{id}/images", s.handleRemoveImageFromAlbum)
+		protected.HandleFunc("PUT /api/v1/gallery/albums/{id}/cover", s.handleSetAlbumCover)
+		protected.HandleFunc("GET /api/v1/gallery/image-albums/{path...}", s.handleGetAlbumsForImage)
 
 		// Admin gallery plugin endpoints
 		protected.HandleFunc("GET /api/v1/admin/gallery/plugins", s.handleListPlugins)
@@ -290,6 +308,10 @@ func (s *Server) Handler() http.Handler {
 		protected.HandleFunc("DELETE /api/v1/admin/gallery/plugins/{id}", s.handleDeletePlugin)
 		protected.HandleFunc("POST /api/v1/admin/gallery/plugins/{id}/test", s.handleTestPlugin)
 		protected.HandleFunc("POST /api/v1/admin/gallery/reprocess", s.handleReprocessGallery)
+
+		// Admin global tag management
+		protected.HandleFunc("DELETE /api/v1/admin/gallery/tags/{tag}", s.handleDeleteTagGlobal)
+		protected.HandleFunc("PUT /api/v1/admin/gallery/tags/{tag}", s.handleRenameTagGlobal)
 	}
 
 	// File properties endpoint
@@ -1413,12 +1435,15 @@ func (s *Server) handleCreateShareLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build share URL from the request host
+	// Build share URL pointing to the web app landing page
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	shareURL := fmt.Sprintf("%s://%s/api/v1/share/%s", scheme, r.Host, link.ID)
+	shareURL := fmt.Sprintf("%s://%s/app/#share/%s", scheme, r.Host, link.ID)
+	if req.Password != "" {
+		shareURL += "/" + req.Password
+	}
 
 	logging.Info("share link created",
 		zap.String("path", path),
@@ -1488,6 +1513,45 @@ func (s *Server) handleShareDownload(w http.ResponseWriter, r *http.Request) {
 		logging.Warn("share link transfer error", zap.String("token", token), zap.Error(err))
 	}
 	metrics.RecordContentDownload(n, err == nil)
+}
+
+func (s *Server) handleShareInfo(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if token == "" {
+		s.sendError(w, http.StatusBadRequest, "share token required")
+		return
+	}
+
+	info, err := s.shareLinks.GetInfo(r.Context(), token)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(protocol.ShareInfoResponse{
+			Valid: false,
+			Error: "share link not found",
+		})
+		return
+	}
+
+	resp := protocol.ShareInfoResponse{
+		HasPassword: info.HasPassword,
+		ExpiresAt:   info.ExpiresAt,
+		Valid:       info.Valid,
+		Error:       info.Error,
+	}
+
+	// Look up file metadata for name and size
+	if info.Valid {
+		fileRow, err := s.metadata.GetFileRow(r.Context(), info.Path)
+		if err == nil && fileRow != nil {
+			resp.FileName = fileRow.Name
+			resp.FileSize = fileRow.Size
+		} else {
+			resp.FileName = filepath.Base(info.Path)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleRevokeShareLink(w http.ResponseWriter, r *http.Request) {

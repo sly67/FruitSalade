@@ -4,7 +4,13 @@ function renderShares() {
         '<div class="toolbar">' +
             '<h2>My Share Links</h2>' +
         '</div>' +
-        '<div id="shares-content"><p style="color:var(--text-muted)">Loading...</p></div>';
+        '<div id="shares-content">' +
+            '<div style="padding:0.75rem">' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+            '</div>' +
+        '</div>';
 
     loadShares();
 }
@@ -62,7 +68,7 @@ function loadShares() {
         container.querySelectorAll('[data-copy-link]').forEach(function(btn) {
             btn.addEventListener('click', function() {
                 var linkId = btn.getAttribute('data-copy-link');
-                var url = window.location.origin + '/api/v1/share/' + linkId;
+                var url = window.location.origin + '/app/#share/' + linkId;
                 if (navigator.clipboard) {
                     navigator.clipboard.writeText(url).then(function() {
                         Toast.success('Link copied to clipboard');

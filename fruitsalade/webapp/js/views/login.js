@@ -4,6 +4,7 @@ function renderLogin() {
         '<div class="login-wrap">' +
             '<div class="form-card login-card">' +
                 '<h1>FruitSalade</h1>' +
+                '<p class="login-tagline">Self-hosted file sync</p>' +
                 '<div id="login-error"></div>' +
                 '<form id="login-form">' +
                     '<div class="form-group">' +
@@ -12,12 +13,25 @@ function renderLogin() {
                     '</div>' +
                     '<div class="form-group">' +
                         '<label for="password">Password</label>' +
-                        '<input type="password" id="password" autocomplete="current-password" required>' +
+                        '<div class="password-wrap">' +
+                            '<input type="password" id="password" autocomplete="current-password" required>' +
+                            '<button type="button" class="password-toggle" id="pw-toggle" title="Show password">&#128065;</button>' +
+                        '</div>' +
                     '</div>' +
-                    '<button type="submit" class="btn" style="width:100%">Login</button>' +
+                    '<button type="submit" class="btn login-submit">Login</button>' +
                 '</form>' +
             '</div>' +
         '</div>';
+
+    // Password visibility toggle
+    var pwToggle = document.getElementById('pw-toggle');
+    var pwInput = document.getElementById('password');
+    pwToggle.addEventListener('click', function() {
+        var isPassword = pwInput.type === 'password';
+        pwInput.type = isPassword ? 'text' : 'password';
+        pwToggle.innerHTML = isPassword ? '&#128064;' : '&#128065;';
+        pwToggle.title = isPassword ? 'Hide password' : 'Show password';
+    });
 
     document.getElementById('login-form').addEventListener('submit', function(e) {
         e.preventDefault();

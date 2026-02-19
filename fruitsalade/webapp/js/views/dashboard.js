@@ -3,7 +3,14 @@ function renderDashboard() {
     var app = document.getElementById('app');
     app.innerHTML =
         '<div class="toolbar"><h2>Dashboard</h2></div>' +
-        '<div id="dashboard-content"><p>Loading...</p></div>';
+        '<div id="dashboard-content">' +
+            '<div class="dashboard-grid">' +
+                '<div class="skeleton skeleton-card"></div>' +
+                '<div class="skeleton skeleton-card"></div>' +
+                '<div class="skeleton skeleton-card"></div>' +
+                '<div class="skeleton skeleton-card"></div>' +
+            '</div>' +
+        '</div>';
 
     API.get('/api/v1/user/dashboard').then(function(data) {
         var html = '';

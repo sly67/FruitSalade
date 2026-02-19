@@ -80,6 +80,64 @@ func (s *ShareLinkStore) Create(ctx context.Context, path string, createdBy int,
 	return link, nil
 }
 
+// ShareLinkInfoResult contains metadata about a share link without requiring a password.
+type ShareLinkInfoResult struct {
+	Path          string     `json:"path"`
+	HasPassword   bool       `json:"has_password"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	MaxDownloads  int        `json:"max_downloads"`
+	DownloadCount int        `json:"download_count"`
+	IsActive      bool       `json:"is_active"`
+	Valid         bool       `json:"valid"`
+	Error         string     `json:"error,omitempty"`
+}
+
+// GetInfo returns metadata about a share link without checking the password.
+func (s *ShareLinkStore) GetInfo(ctx context.Context, id string) (*ShareLinkInfoResult, error) {
+	var link ShareLink
+	var expiresAt sql.NullTime
+	var passwordHash sql.NullString
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, path, created_by, expires_at, password_hash, max_downloads, download_count, is_active, created_at
+		 FROM share_links WHERE id = $1`, id).
+		Scan(&link.ID, &link.Path, &link.CreatedBy, &expiresAt, &passwordHash,
+			&link.MaxDownloads, &link.DownloadCount, &link.IsActive, &link.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("share link not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query share link: %w", err)
+	}
+
+	if expiresAt.Valid {
+		link.ExpiresAt = &expiresAt.Time
+	}
+
+	result := &ShareLinkInfoResult{
+		Path:          link.Path,
+		HasPassword:   passwordHash.Valid && passwordHash.String != "",
+		ExpiresAt:     link.ExpiresAt,
+		MaxDownloads:  link.MaxDownloads,
+		DownloadCount: link.DownloadCount,
+		IsActive:      link.IsActive,
+		Valid:         true,
+	}
+
+	if !link.IsActive {
+		result.Valid = false
+		result.Error = "share link has been revoked"
+	} else if link.ExpiresAt != nil && time.Now().After(*link.ExpiresAt) {
+		result.Valid = false
+		result.Error = "share link has expired"
+	} else if link.MaxDownloads > 0 && link.DownloadCount >= link.MaxDownloads {
+		result.Valid = false
+		result.Error = "share link download limit reached"
+	}
+
+	return result, nil
+}
+
 // Validate checks if a share link is valid and returns it.
 // Checks: exists, active, not expired, download limit not reached.
 func (s *ShareLinkStore) Validate(ctx context.Context, id string, password string) (*ShareLink, error) {

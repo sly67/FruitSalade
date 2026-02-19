@@ -17,6 +17,25 @@ import (
 	"github.com/fruitsalade/fruitsalade/shared/pkg/protocol"
 )
 
+// galleryPermFilter builds a PermFilter from the authenticated user's claims.
+// Returns nil for admins (no filtering needed).
+func (s *Server) galleryPermFilter(ctx context.Context, claims *auth.Claims) *gallery.PermFilter {
+	if claims.IsAdmin {
+		return nil
+	}
+	userGroups, _ := s.groups.GetUserGroupsMap(ctx, claims.UserID)
+	var groupIDs []int
+	for gid := range userGroups {
+		groupIDs = append(groupIDs, gid)
+	}
+	userPerms, _ := s.permissions.GetUserPermissionsMap(ctx, claims.UserID)
+	var permPaths []string
+	for path := range userPerms {
+		permPaths = append(permPaths, path)
+	}
+	return gallery.BuildPermFilter(1, claims.UserID, groupIDs, permPaths, false)
+}
+
 // ─── Gallery Search ─────────────────────────────────────────────────────────
 
 func (s *Server) handleGallerySearch(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +269,14 @@ func (s *Server) handleGalleryMetadata(w http.ResponseWriter, r *http.Request) {
 // ─── Albums ─────────────────────────────────────────────────────────────────
 
 func (s *Server) handleAlbumsByDate(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.galleryStore.GetAlbumsByDate(r.Context())
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	pf := s.galleryPermFilter(r.Context(), claims)
+
+	rows, err := s.galleryStore.GetAlbumsByDate(r.Context(), pf)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to get date albums: "+err.Error())
 		return
@@ -287,7 +313,14 @@ func (s *Server) handleAlbumsByDate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAlbumsByLocation(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.galleryStore.GetAlbumsByLocation(r.Context())
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	pf := s.galleryPermFilter(r.Context(), claims)
+
+	rows, err := s.galleryStore.GetAlbumsByLocation(r.Context(), pf)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to get location albums: "+err.Error())
 		return
@@ -324,7 +357,14 @@ func (s *Server) handleAlbumsByLocation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAlbumsByCamera(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.galleryStore.GetAlbumsByCamera(r.Context())
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	pf := s.galleryPermFilter(r.Context(), claims)
+
+	rows, err := s.galleryStore.GetAlbumsByCamera(r.Context(), pf)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to get camera albums: "+err.Error())
 		return
@@ -433,7 +473,14 @@ func (s *Server) handleRemoveTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
-	tags, err := s.galleryStore.ListAllTags(r.Context())
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	pf := s.galleryPermFilter(r.Context(), claims)
+
+	tags, err := s.galleryStore.ListAllTags(r.Context(), pf)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to list tags: "+err.Error())
 		return
@@ -454,7 +501,14 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 // ─── Stats ──────────────────────────────────────────────────────────────────
 
 func (s *Server) handleGalleryStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.galleryStore.GetStats(r.Context())
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	pf := s.galleryPermFilter(r.Context(), claims)
+
+	stats, err := s.galleryStore.GetStats(r.Context(), pf)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, "failed to get stats: "+err.Error())
 		return
@@ -468,6 +522,38 @@ func (s *Server) handleGalleryStats(w http.ResponseWriter, r *http.Request) {
 		Processed:   stats.Processed,
 		Pending:     stats.Pending,
 	})
+}
+
+// ─── Map Points ─────────────────────────────────────────────────────────────
+
+func (s *Server) handleGalleryMapPoints(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	pf := s.galleryPermFilter(r.Context(), claims)
+
+	points, err := s.galleryStore.GetMapPoints(r.Context(), pf)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get map points: "+err.Error())
+		return
+	}
+
+	resp := make([]protocol.MapPointResponse, 0, len(points))
+	for _, p := range points {
+		resp = append(resp, protocol.MapPointResponse{
+			FilePath:     p.FilePath,
+			FileName:     p.FileName,
+			Latitude:     p.Latitude,
+			Longitude:    p.Longitude,
+			HasThumbnail: p.HasThumbnail,
+			DateTaken:    p.DateTaken,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 // ─── Admin: Plugins ─────────────────────────────────────────────────────────
@@ -651,6 +737,419 @@ func (s *Server) handleReprocessGallery(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "reprocessing started",
+	})
+}
+
+// ─── Custom Albums ──────────────────────────────────────────────────────────
+
+func (s *Server) handleListUserAlbums(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	albums, err := s.galleryStore.ListAlbums(r.Context(), claims.UserID)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to list albums: "+err.Error())
+		return
+	}
+
+	resp := make([]protocol.AlbumResponse, 0, len(albums))
+	for _, a := range albums {
+		resp = append(resp, protocol.AlbumResponse{
+			ID:          a.ID,
+			Name:        a.Name,
+			Description: a.Description,
+			CoverPath:   a.CoverPath,
+			ImageCount:  a.ImageCount,
+			CreatedAt:   a.CreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleCreateAlbum(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req protocol.AlbumRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		s.sendError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	album, err := s.galleryStore.CreateAlbum(r.Context(), claims.UserID, req.Name, req.Description)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to create album: "+err.Error())
+		return
+	}
+
+	logging.Info("album created", zap.String("name", album.Name), zap.Int("user_id", claims.UserID))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(protocol.AlbumResponse{
+		ID:          album.ID,
+		Name:        album.Name,
+		Description: album.Description,
+		CreatedAt:   album.CreatedAt,
+	})
+}
+
+func (s *Server) handleUpdateAlbum(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid album ID")
+		return
+	}
+
+	album, err := s.galleryStore.GetAlbum(r.Context(), id)
+	if err != nil || album == nil {
+		s.sendError(w, http.StatusNotFound, "album not found")
+		return
+	}
+	if album.UserID != claims.UserID && !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var req protocol.AlbumRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		s.sendError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	if err := s.galleryStore.UpdateAlbum(r.Context(), id, req.Name, req.Description); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to update album: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "updated": true})
+}
+
+func (s *Server) handleDeleteAlbum(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid album ID")
+		return
+	}
+
+	album, err := s.galleryStore.GetAlbum(r.Context(), id)
+	if err != nil || album == nil {
+		s.sendError(w, http.StatusNotFound, "album not found")
+		return
+	}
+	if album.UserID != claims.UserID && !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	if err := s.galleryStore.DeleteAlbum(r.Context(), id); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to delete album: "+err.Error())
+		return
+	}
+
+	logging.Info("album deleted", zap.Int("id", id))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "deleted": true})
+}
+
+func (s *Server) handleGetAlbumImages(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid album ID")
+		return
+	}
+
+	album, err := s.galleryStore.GetAlbum(r.Context(), id)
+	if err != nil || album == nil {
+		s.sendError(w, http.StatusNotFound, "album not found")
+		return
+	}
+	if album.UserID != claims.UserID && !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	paths, err := s.galleryStore.GetAlbumImages(r.Context(), id)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get album images: "+err.Error())
+		return
+	}
+	if paths == nil {
+		paths = []string{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(paths)
+}
+
+func (s *Server) handleAddImageToAlbum(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid album ID")
+		return
+	}
+
+	album, err := s.galleryStore.GetAlbum(r.Context(), id)
+	if err != nil || album == nil {
+		s.sendError(w, http.StatusNotFound, "album not found")
+		return
+	}
+	if album.UserID != claims.UserID && !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var req protocol.AlbumImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.FilePath == "" {
+		s.sendError(w, http.StatusBadRequest, "file_path is required")
+		return
+	}
+
+	// Verify the user has read access to the file being added
+	if !s.permissions.CheckAccess(r.Context(), claims.UserID, req.FilePath, "read", claims.IsAdmin) {
+		s.sendError(w, http.StatusForbidden, "no read access to this file")
+		return
+	}
+
+	if err := s.galleryStore.AddImageToAlbum(r.Context(), id, req.FilePath); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to add image: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{"album_id": id, "file_path": req.FilePath, "added": true})
+}
+
+func (s *Server) handleRemoveImageFromAlbum(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid album ID")
+		return
+	}
+
+	album, err := s.galleryStore.GetAlbum(r.Context(), id)
+	if err != nil || album == nil {
+		s.sendError(w, http.StatusNotFound, "album not found")
+		return
+	}
+	if album.UserID != claims.UserID && !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var req protocol.AlbumImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.FilePath == "" {
+		s.sendError(w, http.StatusBadRequest, "file_path is required")
+		return
+	}
+
+	if err := s.galleryStore.RemoveImageFromAlbum(r.Context(), id, req.FilePath); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to remove image: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"album_id": id, "file_path": req.FilePath, "removed": true})
+}
+
+func (s *Server) handleSetAlbumCover(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid album ID")
+		return
+	}
+
+	album, err := s.galleryStore.GetAlbum(r.Context(), id)
+	if err != nil || album == nil {
+		s.sendError(w, http.StatusNotFound, "album not found")
+		return
+	}
+	if album.UserID != claims.UserID && !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var req protocol.AlbumCoverRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.CoverPath == "" {
+		s.sendError(w, http.StatusBadRequest, "cover_path is required")
+		return
+	}
+
+	if err := s.galleryStore.SetAlbumCover(r.Context(), id, req.CoverPath); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to set cover: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"album_id": id, "cover_path": req.CoverPath})
+}
+
+func (s *Server) handleGetAlbumsForImage(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	pathParam := r.PathValue("path")
+	if pathParam == "" {
+		s.sendError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	filePath := "/" + pathParam
+
+	albums, err := s.galleryStore.GetAlbumsForImage(r.Context(), filePath)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get albums: "+err.Error())
+		return
+	}
+
+	resp := make([]protocol.AlbumResponse, 0, len(albums))
+	for _, a := range albums {
+		resp = append(resp, protocol.AlbumResponse{
+			ID:          a.ID,
+			Name:        a.Name,
+			Description: a.Description,
+			CoverPath:   a.CoverPath,
+			ImageCount:  a.ImageCount,
+			CreatedAt:   a.CreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// ─── Admin: Global Tag Management ───────────────────────────────────────────
+
+func (s *Server) handleDeleteTagGlobal(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdmin(w, r) == nil {
+		return
+	}
+
+	tag := r.PathValue("tag")
+	if tag == "" {
+		s.sendError(w, http.StatusBadRequest, "tag is required")
+		return
+	}
+
+	count, err := s.galleryStore.DeleteTagGlobal(r.Context(), tag)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to delete tag: "+err.Error())
+		return
+	}
+
+	logging.Info("global tag deleted", zap.String("tag", tag), zap.Int64("affected", count))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"tag":      tag,
+		"deleted":  true,
+		"affected": count,
+	})
+}
+
+func (s *Server) handleRenameTagGlobal(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdmin(w, r) == nil {
+		return
+	}
+
+	tag := r.PathValue("tag")
+	if tag == "" {
+		s.sendError(w, http.StatusBadRequest, "tag is required")
+		return
+	}
+
+	var req protocol.GlobalTagActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.NewTag == "" {
+		s.sendError(w, http.StatusBadRequest, "new_tag is required")
+		return
+	}
+
+	count, err := s.galleryStore.RenameTagGlobal(r.Context(), tag, req.NewTag)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to rename tag: "+err.Error())
+		return
+	}
+
+	logging.Info("global tag renamed", zap.String("from", tag), zap.String("to", req.NewTag), zap.Int64("affected", count))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"old_tag":  tag,
+		"new_tag":  req.NewTag,
+		"affected": count,
 	})
 }
 

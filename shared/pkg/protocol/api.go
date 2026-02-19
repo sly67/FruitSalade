@@ -103,6 +103,16 @@ type ShareLinkResponse struct {
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
+// ShareInfoResponse is returned by GET /api/v1/share/{token}/info.
+type ShareInfoResponse struct {
+	FileName    string     `json:"file_name"`
+	FileSize    int64      `json:"file_size"`
+	HasPassword bool       `json:"has_password"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	Valid       bool       `json:"valid"`
+	Error       string     `json:"error,omitempty"`
+}
+
 // UserQuotaResponse describes a user's quota settings.
 type UserQuotaResponse struct {
 	UserID              int   `json:"user_id"`
@@ -385,9 +395,50 @@ type GalleryStatsResponse struct {
 	Pending     int `json:"pending"`
 }
 
+// MapPointResponse is a minimal representation of a geolocated image for map display.
+type MapPointResponse struct {
+	FilePath     string     `json:"file_path"`
+	FileName     string     `json:"file_name"`
+	Latitude     float64    `json:"latitude"`
+	Longitude    float64    `json:"longitude"`
+	HasThumbnail bool       `json:"has_thumbnail"`
+	DateTaken    *time.Time `json:"date_taken,omitempty"`
+}
+
 // TagRequest is the body for POST /api/v1/gallery/tags/{path}.
 type TagRequest struct {
 	Tag string `json:"tag"`
+}
+
+// AlbumRequest is the body for POST/PUT /api/v1/gallery/albums.
+type AlbumRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// AlbumResponse is returned by album endpoints.
+type AlbumResponse struct {
+	ID          int       `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CoverPath   *string   `json:"cover_path,omitempty"`
+	ImageCount  int       `json:"image_count"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// AlbumCoverRequest is the body for PUT /api/v1/gallery/albums/{id}/cover.
+type AlbumCoverRequest struct {
+	CoverPath string `json:"cover_path"`
+}
+
+// AlbumImageRequest is the body for POST/DELETE /api/v1/gallery/albums/{id}/images.
+type AlbumImageRequest struct {
+	FilePath string `json:"file_path"`
+}
+
+// GlobalTagActionRequest is the body for PUT /api/v1/admin/gallery/tags/{tag}.
+type GlobalTagActionRequest struct {
+	NewTag string `json:"new_tag"`
 }
 
 // PluginRequest is the body for POST/PUT /api/v1/admin/gallery/plugins.

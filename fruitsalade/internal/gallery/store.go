@@ -212,9 +212,21 @@ func (s *GalleryStore) GetTagsForFile(ctx context.Context, filePath string) ([]I
 }
 
 // ListAllTags returns all distinct tags with counts.
-func (s *GalleryStore) ListAllTags(ctx context.Context) ([]TagCount, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT tag, COUNT(*) as cnt FROM image_tags GROUP BY tag ORDER BY cnt DESC, tag`)
+func (s *GalleryStore) ListAllTags(ctx context.Context, pf *PermFilter) ([]TagCount, error) {
+	var args []interface{}
+	join := ""
+	permWhere := ""
+	if pf != nil {
+		join = " JOIN files f ON f.path = it.file_path"
+		permWhere = " WHERE " + pf.Condition
+		args = pf.Args
+	}
+
+	query := fmt.Sprintf(
+		`SELECT it.tag, COUNT(*) as cnt FROM image_tags it%s%s GROUP BY it.tag ORDER BY cnt DESC, it.tag`,
+		join, permWhere)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,16 +261,40 @@ type Stats struct {
 }
 
 // GetStats returns gallery-wide statistics.
-func (s *GalleryStore) GetStats(ctx context.Context) (*Stats, error) {
+func (s *GalleryStore) GetStats(ctx context.Context, pf *PermFilter) (*Stats, error) {
 	st := &Stats{}
-	err := s.db.QueryRowContext(ctx, `
+
+	if pf == nil {
+		// Admin path: simple query, no joins needed
+		err := s.db.QueryRowContext(ctx, `
+			SELECT
+				COUNT(*),
+				COUNT(*) FILTER (WHERE latitude IS NOT NULL AND longitude IS NOT NULL),
+				(SELECT COUNT(DISTINCT file_path) FROM image_tags),
+				COUNT(*) FILTER (WHERE status = 'done'),
+				COUNT(*) FILTER (WHERE status = 'pending')
+			FROM image_metadata`).Scan(
+			&st.TotalImages, &st.WithGPS, &st.WithTags, &st.Processed, &st.Pending)
+		if err != nil {
+			return nil, err
+		}
+		return st, nil
+	}
+
+	// Filtered path: JOIN files for permission check, LEFT JOIN tags for count
+	query := fmt.Sprintf(`
 		SELECT
-			COUNT(*),
-			COUNT(*) FILTER (WHERE latitude IS NOT NULL AND longitude IS NOT NULL),
-			(SELECT COUNT(DISTINCT file_path) FROM image_tags),
-			COUNT(*) FILTER (WHERE status = 'done'),
-			COUNT(*) FILTER (WHERE status = 'pending')
-		FROM image_metadata`).Scan(
+			COUNT(DISTINCT im.file_path),
+			COUNT(DISTINCT im.file_path) FILTER (WHERE im.latitude IS NOT NULL AND im.longitude IS NOT NULL),
+			COUNT(DISTINCT it.file_path),
+			COUNT(DISTINCT im.file_path) FILTER (WHERE im.status = 'done'),
+			COUNT(DISTINCT im.file_path) FILTER (WHERE im.status = 'pending')
+		FROM image_metadata im
+		JOIN files f ON f.path = im.file_path
+		LEFT JOIN image_tags it ON it.file_path = im.file_path
+		WHERE %s`, pf.Condition)
+
+	err := s.db.QueryRowContext(ctx, query, pf.Args...).Scan(
 		&st.TotalImages, &st.WithGPS, &st.WithTags, &st.Processed, &st.Pending)
 	if err != nil {
 		return nil, err
@@ -387,4 +423,192 @@ func (s *GalleryStore) UpdatePluginHealth(ctx context.Context, id int, lastError
 		UPDATE tagging_plugins SET last_health = NOW(), last_error = $1, updated_at = NOW()
 		WHERE id = $2`, lastError, id)
 	return err
+}
+
+// ─── Custom Albums ──────────────────────────────────────────────────────────
+
+// Album represents a row in the user_albums table.
+type Album struct {
+	ID          int       `json:"id"`
+	UserID      int       `json:"user_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CoverPath   *string   `json:"cover_path,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// AlbumSummary includes an image count for listing.
+type AlbumSummary struct {
+	ID          int       `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CoverPath   *string   `json:"cover_path,omitempty"`
+	ImageCount  int       `json:"image_count"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// CreateAlbum inserts a new user album.
+func (s *GalleryStore) CreateAlbum(ctx context.Context, userID int, name, description string) (*Album, error) {
+	a := &Album{UserID: userID, Name: name, Description: description}
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO user_albums (user_id, name, description)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at, updated_at`,
+		userID, name, description,
+	).Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// UpdateAlbum updates an album's name and description.
+func (s *GalleryStore) UpdateAlbum(ctx context.Context, albumID int, name, description string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE user_albums SET name = $1, description = $2, updated_at = NOW()
+		WHERE id = $3`, name, description, albumID)
+	return err
+}
+
+// DeleteAlbum removes an album and its image associations.
+func (s *GalleryStore) DeleteAlbum(ctx context.Context, albumID int) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM user_albums WHERE id = $1`, albumID)
+	return err
+}
+
+// GetAlbum retrieves a single album by ID.
+func (s *GalleryStore) GetAlbum(ctx context.Context, albumID int) (*Album, error) {
+	a := &Album{}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, name, description, cover_path, created_at, updated_at
+		FROM user_albums WHERE id = $1`, albumID,
+	).Scan(&a.ID, &a.UserID, &a.Name, &a.Description, &a.CoverPath, &a.CreatedAt, &a.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return a, err
+}
+
+// ListAlbums returns all albums for a user with image counts.
+func (s *GalleryStore) ListAlbums(ctx context.Context, userID int) ([]AlbumSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT a.id, a.name, a.description, a.cover_path, a.created_at,
+			COUNT(ai.file_path) AS image_count
+		FROM user_albums a
+		LEFT JOIN album_images ai ON ai.album_id = a.id
+		WHERE a.user_id = $1
+		GROUP BY a.id
+		ORDER BY a.updated_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var albums []AlbumSummary
+	for rows.Next() {
+		var a AlbumSummary
+		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.CoverPath, &a.CreatedAt, &a.ImageCount); err != nil {
+			return nil, err
+		}
+		albums = append(albums, a)
+	}
+	return albums, rows.Err()
+}
+
+// SetAlbumCover sets the cover image for an album.
+func (s *GalleryStore) SetAlbumCover(ctx context.Context, albumID int, coverPath string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE user_albums SET cover_path = $1, updated_at = NOW()
+		WHERE id = $2`, coverPath, albumID)
+	return err
+}
+
+// AddImageToAlbum adds an image to an album, ignoring duplicates.
+func (s *GalleryStore) AddImageToAlbum(ctx context.Context, albumID int, filePath string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO album_images (album_id, file_path)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING`, albumID, filePath)
+	return err
+}
+
+// RemoveImageFromAlbum removes an image from an album.
+func (s *GalleryStore) RemoveImageFromAlbum(ctx context.Context, albumID int, filePath string) error {
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM album_images WHERE album_id = $1 AND file_path = $2`, albumID, filePath)
+	return err
+}
+
+// GetAlbumImages returns all file paths in an album.
+func (s *GalleryStore) GetAlbumImages(ctx context.Context, albumID int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT file_path FROM album_images WHERE album_id = $1 ORDER BY added_at DESC`, albumID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
+// GetAlbumsForImage returns all albums that contain a given image.
+func (s *GalleryStore) GetAlbumsForImage(ctx context.Context, filePath string) ([]AlbumSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT a.id, a.name, a.description, a.cover_path, a.created_at,
+			(SELECT COUNT(*) FROM album_images WHERE album_id = a.id) AS image_count
+		FROM user_albums a
+		JOIN album_images ai ON ai.album_id = a.id
+		WHERE ai.file_path = $1
+		ORDER BY a.name`, filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var albums []AlbumSummary
+	for rows.Next() {
+		var a AlbumSummary
+		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.CoverPath, &a.CreatedAt, &a.ImageCount); err != nil {
+			return nil, err
+		}
+		albums = append(albums, a)
+	}
+	return albums, rows.Err()
+}
+
+// ─── Global Tag Management ──────────────────────────────────────────────────
+
+// DeleteTagGlobal removes a tag from all images. Returns the number of rows affected.
+func (s *GalleryStore) DeleteTagGlobal(ctx context.Context, tag string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM image_tags WHERE tag = $1`, tag)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// RenameTagGlobal renames a tag across all images. Handles conflicts by
+// deleting the old tag where the new tag already exists on the same image.
+func (s *GalleryStore) RenameTagGlobal(ctx context.Context, oldTag, newTag string) (int64, error) {
+	// First remove potential conflicts (images that already have the new tag)
+	s.db.ExecContext(ctx, `
+		DELETE FROM image_tags WHERE tag = $1
+		AND file_path IN (SELECT file_path FROM image_tags WHERE tag = $2)`,
+		oldTag, newTag)
+
+	// Then rename remaining
+	res, err := s.db.ExecContext(ctx, `UPDATE image_tags SET tag = $1 WHERE tag = $2`, newTag, oldTag)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

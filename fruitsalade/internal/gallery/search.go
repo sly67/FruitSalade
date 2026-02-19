@@ -49,6 +49,49 @@ type SearchResult struct {
 	HasThumbnail    bool
 }
 
+// PermFilter holds a SQL WHERE fragment and its arguments for permission filtering.
+type PermFilter struct {
+	Condition string        // SQL fragment like "(f.owner_id = $1 OR ...)"
+	Args      []interface{} // positional arguments
+	ArgCount  int           // number of args consumed
+}
+
+// BuildPermFilter creates a permission filter for gallery queries.
+// argStart is the first $N placeholder to use. Returns nil if isAdmin.
+func BuildPermFilter(argStart int, userID int, groupIDs []int, permPaths []string, isAdmin bool) *PermFilter {
+	if isAdmin {
+		return nil
+	}
+
+	n := argStart
+	var args []interface{}
+
+	cond := fmt.Sprintf(`(
+		f.owner_id = $%d
+		OR f.visibility = 'public'
+		OR (f.visibility = 'group' AND f.group_id = ANY($%d))
+	)`, n, n+1)
+	args = append(args, userID, groupIDs)
+	n += 2
+
+	if len(permPaths) > 0 {
+		cond = fmt.Sprintf(`(
+			f.owner_id = $%d
+			OR f.visibility = 'public'
+			OR (f.visibility = 'group' AND f.group_id = ANY($%d))
+			OR f.path = ANY($%d)
+		)`, n-2, n-1, n)
+		args = append(args, permPaths)
+		n++
+	}
+
+	return &PermFilter{
+		Condition: cond,
+		Args:      args,
+		ArgCount:  n - argStart,
+	}
+}
+
 // Search performs a permission-filtered gallery search.
 func (s *GalleryStore) Search(ctx context.Context, p *SearchParams) ([]SearchResult, int, error) {
 	if p.Limit <= 0 || p.Limit > 200 {
@@ -68,25 +111,10 @@ func (s *GalleryStore) Search(ctx context.Context, p *SearchParams) ([]SearchRes
 
 	// Permission filter
 	if !p.IsAdmin {
-		permCond := fmt.Sprintf(`(
-			f.owner_id = $%d
-			OR f.visibility = 'public'
-			OR (f.visibility = 'group' AND f.group_id = ANY($%d))
-		)`, argN, argN+1)
-		args = append(args, p.UserID, p.UserGroupIDs)
-		argN += 2
-
-		if len(p.UserPermPaths) > 0 {
-			permCond = fmt.Sprintf(`(
-				f.owner_id = $%d
-				OR f.visibility = 'public'
-				OR (f.visibility = 'group' AND f.group_id = ANY($%d))
-				OR f.path = ANY($%d)
-			)`, argN-2, argN-1, argN)
-			args = append(args, p.UserPermPaths)
-			argN++
-		}
-		conditions = append(conditions, permCond)
+		pf := BuildPermFilter(argN, p.UserID, p.UserGroupIDs, p.UserPermPaths, false)
+		conditions = append(conditions, pf.Condition)
+		args = append(args, pf.Args...)
+		argN += pf.ArgCount
 	}
 
 	// Text search (file name)
@@ -216,13 +244,24 @@ type DateAlbumRow struct {
 }
 
 // GetAlbumsByDate returns images grouped by year and month.
-func (s *GalleryStore) GetAlbumsByDate(ctx context.Context) ([]DateAlbumRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT EXTRACT(YEAR FROM date_taken)::INT, EXTRACT(MONTH FROM date_taken)::INT, COUNT(*)
-		FROM image_metadata
-		WHERE date_taken IS NOT NULL AND status = 'done'
+func (s *GalleryStore) GetAlbumsByDate(ctx context.Context, pf *PermFilter) ([]DateAlbumRow, error) {
+	var args []interface{}
+	join := ""
+	permWhere := ""
+	if pf != nil {
+		join = " JOIN files f ON f.path = im.file_path"
+		permWhere = " AND " + pf.Condition
+		args = pf.Args
+	}
+
+	query := fmt.Sprintf(`
+		SELECT EXTRACT(YEAR FROM im.date_taken)::INT, EXTRACT(MONTH FROM im.date_taken)::INT, COUNT(*)
+		FROM image_metadata im%s
+		WHERE im.date_taken IS NOT NULL AND im.status = 'done'%s
 		GROUP BY 1, 2
-		ORDER BY 1 DESC, 2 DESC`)
+		ORDER BY 1 DESC, 2 DESC`, join, permWhere)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -247,13 +286,24 @@ type LocationAlbumRow struct {
 }
 
 // GetAlbumsByLocation returns images grouped by country and city.
-func (s *GalleryStore) GetAlbumsByLocation(ctx context.Context) ([]LocationAlbumRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT COALESCE(location_country, 'Unknown'), COALESCE(location_city, 'Unknown'), COUNT(*)
-		FROM image_metadata
-		WHERE (location_country IS NOT NULL OR location_city IS NOT NULL) AND status = 'done'
+func (s *GalleryStore) GetAlbumsByLocation(ctx context.Context, pf *PermFilter) ([]LocationAlbumRow, error) {
+	var args []interface{}
+	join := ""
+	permWhere := ""
+	if pf != nil {
+		join = " JOIN files f ON f.path = im.file_path"
+		permWhere = " AND " + pf.Condition
+		args = pf.Args
+	}
+
+	query := fmt.Sprintf(`
+		SELECT COALESCE(im.location_country, 'Unknown'), COALESCE(im.location_city, 'Unknown'), COUNT(*)
+		FROM image_metadata im%s
+		WHERE (im.location_country IS NOT NULL OR im.location_city IS NOT NULL) AND im.status = 'done'%s
 		GROUP BY 1, 2
-		ORDER BY 1, 3 DESC`)
+		ORDER BY 1, 3 DESC`, join, permWhere)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -278,13 +328,24 @@ type CameraAlbumRow struct {
 }
 
 // GetAlbumsByCamera returns images grouped by camera make and model.
-func (s *GalleryStore) GetAlbumsByCamera(ctx context.Context) ([]CameraAlbumRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT COALESCE(camera_make, 'Unknown'), COALESCE(camera_model, 'Unknown'), COUNT(*)
-		FROM image_metadata
-		WHERE (camera_make IS NOT NULL OR camera_model IS NOT NULL) AND status = 'done'
+func (s *GalleryStore) GetAlbumsByCamera(ctx context.Context, pf *PermFilter) ([]CameraAlbumRow, error) {
+	var args []interface{}
+	join := ""
+	permWhere := ""
+	if pf != nil {
+		join = " JOIN files f ON f.path = im.file_path"
+		permWhere = " AND " + pf.Condition
+		args = pf.Args
+	}
+
+	query := fmt.Sprintf(`
+		SELECT COALESCE(im.camera_make, 'Unknown'), COALESCE(im.camera_model, 'Unknown'), COUNT(*)
+		FROM image_metadata im%s
+		WHERE (im.camera_make IS NOT NULL OR im.camera_model IS NOT NULL) AND im.status = 'done'%s
 		GROUP BY 1, 2
-		ORDER BY 1, 3 DESC`)
+		ORDER BY 1, 3 DESC`, join, permWhere)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +426,62 @@ func (s *GalleryStore) ListUnprocessedImages(ctx context.Context, extensions []s
 		paths = append(paths, p)
 	}
 	return paths, rows.Err()
+}
+
+// ─── Map Points ─────────────────────────────────────────────────────────────
+
+// MapPoint holds minimal data for a geolocated image marker.
+type MapPoint struct {
+	FilePath     string
+	FileName     string
+	Latitude     float64
+	Longitude    float64
+	HasThumbnail bool
+	DateTaken    *time.Time
+}
+
+// GetMapPoints returns all geolocated images with minimal fields for map display.
+func (s *GalleryStore) GetMapPoints(ctx context.Context, pf *PermFilter) ([]MapPoint, error) {
+	var args []interface{}
+	join := ""
+	permWhere := ""
+	if pf != nil {
+		join = " JOIN files f ON f.path = im.file_path"
+		permWhere = " AND " + pf.Condition
+		args = pf.Args
+	}
+
+	query := fmt.Sprintf(`
+		SELECT %s im.latitude, im.longitude, im.has_thumbnail, im.date_taken
+		FROM image_metadata im%s
+		WHERE im.latitude IS NOT NULL AND im.longitude IS NOT NULL AND im.status = 'done'%s
+		ORDER BY im.date_taken DESC NULLS LAST`,
+		filePathSelect(pf), join, permWhere)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("map points: %w", err)
+	}
+	defer rows.Close()
+
+	var results []MapPoint
+	for rows.Next() {
+		var r MapPoint
+		if err := rows.Scan(&r.FilePath, &r.FileName, &r.Latitude, &r.Longitude, &r.HasThumbnail, &r.DateTaken); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// filePathSelect returns the SELECT columns for file path/name depending on permission filter.
+// When pf is nil (admin), we need to join files to get the name.
+func filePathSelect(pf *PermFilter) string {
+	if pf != nil {
+		return "f.path, f.name,"
+	}
+	return "im.file_path, SUBSTRING(im.file_path FROM '[^/]+$'),"
 }
 
 // ImageExistsInDB checks if an image_metadata row exists for the given path.

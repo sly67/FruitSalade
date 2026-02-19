@@ -13,7 +13,8 @@
         'settings':         renderSettings,
         'storage':          renderStorage,
         'gallery':          renderGallery,
-        'gallery-plugins':  renderGalleryPlugins
+        'gallery-plugins':  renderGalleryPlugins,
+        'share':            renderShareDownload
     };
 
     // Admin-only routes
@@ -37,7 +38,7 @@
         var route = getRoute();
 
         // Auth guard
-        if (route !== 'login' && !API.isAuthenticated()) {
+        if (route !== 'login' && route !== 'share' && !API.isAuthenticated()) {
             window.location.hash = '#login';
             return;
         }
@@ -66,9 +67,21 @@
             layout.classList.add('hidden');
             tabBar.classList.add('hidden');
             document.getElementById('login-container').classList.remove('hidden');
+        } else if (route === 'share') {
+            topbar.classList.add('hidden');
+            tabBar.classList.add('hidden');
+            var loginContainer = document.getElementById('login-container');
+            if (loginContainer) loginContainer.classList.add('hidden');
+            layout.classList.remove('hidden');
+            document.getElementById('sidebar').classList.add('hidden');
+            var dp = document.getElementById('detail-panel');
+            if (dp) { dp.classList.add('hidden'); dp.innerHTML = ''; }
+            var treeArea = document.getElementById('sidebar-tree');
+            if (treeArea) treeArea.classList.add('hidden');
         } else {
             topbar.classList.remove('hidden');
             layout.classList.remove('hidden');
+            document.getElementById('sidebar').classList.remove('hidden');
             if (isMobile) {
                 tabBar.classList.remove('hidden');
             }
@@ -372,124 +385,6 @@
     // Initial check
     isMobile = mql.matches;
     mql.addEventListener('change', onMediaChange);
-
-    // ── Swipe Gestures ──────────────────────────────────────────────────────
-
-    (function() {
-        var touchStartX = 0;
-        var touchStartY = 0;
-        var tracking = false;
-        var swipeType = ''; // 'open' or 'close'
-
-        var layout = document.getElementById('layout');
-
-        layout.addEventListener('touchstart', function(e) {
-            if (!isMobile) return;
-            var touch = e.touches[0];
-            touchStartX = touch.clientX;
-            touchStartY = touch.clientY;
-
-            var sidebar = document.getElementById('sidebar');
-
-            if (touchStartX < 30) {
-                // Near left edge — potential open swipe
-                swipeType = 'open';
-                tracking = true;
-            } else if (sidebar.classList.contains('mobile-open')) {
-                // Sidebar is open — potential close swipe
-                swipeType = 'close';
-                tracking = true;
-            } else {
-                tracking = false;
-            }
-        }, { passive: true });
-
-        layout.addEventListener('touchend', function(e) {
-            if (!tracking || !isMobile) return;
-            tracking = false;
-
-            var touch = e.changedTouches[0];
-            var dx = touch.clientX - touchStartX;
-            var dy = Math.abs(touch.clientY - touchStartY);
-
-            // Must swipe at least 50px horizontal with max 30px vertical drift
-            if (dy > 30) return;
-
-            if (swipeType === 'open' && dx > 50) {
-                openSidebarMobile();
-            } else if (swipeType === 'close' && dx < -50) {
-                closeSidebarMobile();
-            }
-        }, { passive: true });
-    })();
-
-    // ── Pull-to-Refresh ─────────────────────────────────────────────────────
-
-    (function() {
-        var appEl = document.getElementById('app');
-        var pulling = false;
-        var pullStartY = 0;
-        var pullDist = 0;
-        var indicator = null;
-        var threshold = 60;
-
-        function ensureIndicator() {
-            if (!indicator) {
-                indicator = document.createElement('div');
-                indicator.className = 'pull-indicator';
-                indicator.textContent = 'Pull to refresh';
-                appEl.appendChild(indicator);
-            }
-            return indicator;
-        }
-
-        appEl.addEventListener('touchstart', function(e) {
-            if (!('ontouchstart' in window)) return;
-            if (appEl.scrollTop !== 0) return;
-            pullStartY = e.touches[0].clientY;
-            pulling = true;
-            pullDist = 0;
-        }, { passive: true });
-
-        appEl.addEventListener('touchmove', function(e) {
-            if (!pulling) return;
-            var currentY = e.touches[0].clientY;
-            pullDist = currentY - pullStartY;
-            if (pullDist < 0) { pulling = false; return; }
-
-            var ind = ensureIndicator();
-            if (pullDist > threshold) {
-                ind.textContent = 'Release to refresh';
-            } else {
-                ind.textContent = 'Pull to refresh';
-            }
-            if (pullDist > 10) {
-                ind.classList.add('visible');
-            }
-        }, { passive: true });
-
-        appEl.addEventListener('touchend', function() {
-            if (!pulling) return;
-            pulling = false;
-
-            if (indicator) {
-                indicator.classList.remove('visible');
-            }
-
-            if (pullDist > threshold) {
-                // Show spinner briefly
-                var ind = ensureIndicator();
-                ind.textContent = 'Refreshing...';
-                ind.classList.add('visible');
-                setTimeout(function() {
-                    ind.classList.remove('visible');
-                    ind.textContent = '';
-                }, 600);
-                navigate();
-            }
-            pullDist = 0;
-        }, { passive: true });
-    })();
 
     // ── Event Listeners ─────────────────────────────────────────────────────
 

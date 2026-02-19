@@ -59,8 +59,8 @@ var API = (function() {
         return request('PUT', path, body);
     }
 
-    function del(path) {
-        return request('DELETE', path);
+    function del(path, body) {
+        return request('DELETE', path, body);
     }
 
     // Upload a file to a path (raw binary POST)

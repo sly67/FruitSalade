@@ -166,10 +166,28 @@ func main() {
 		if info.IsDir() {
 			return seedDir(ctx, metaStore, virtualPath, info, createdDirs)
 		}
+
+		// Skip non-data files (scripts, SQL seeds)
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".sql" || ext == ".py" {
+			return nil
+		}
+
 		return seedFile(ctx, metaStore, backend, path, virtualPath, info, createdDirs)
 	})
 	if err != nil {
 		logging.Fatal("walk failed", zap.Error(err))
+	}
+
+	// Run gallery seed SQL if present (tags, albums, album images)
+	gallerySeed := filepath.Join(*dataDir, "gallery_seed.sql")
+	if sqlBytes, err := os.ReadFile(gallerySeed); err == nil {
+		logging.Info("running gallery seed SQL...", zap.String("file", gallerySeed))
+		if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
+			logging.Error("gallery seed SQL failed (non-fatal)", zap.Error(err))
+		} else {
+			logging.Info("gallery seed SQL complete")
+		}
 	}
 
 	total, _ := metaStore.FileCount(ctx)

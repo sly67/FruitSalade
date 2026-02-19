@@ -20,7 +20,16 @@ function renderBrowser() {
         '<div id="drop-zone" class="drop-zone hidden">Drop files here to upload</div>' +
         '<div id="batch-toolbar" class="batch-toolbar hidden"></div>' +
         '<div id="browser-status"></div>' +
-        '<div id="file-table" class="table-wrap"></div>';
+        '<div id="file-table" class="table-wrap">' +
+            '<div style="padding:0.75rem">' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+            '</div>' +
+        '</div>';
 
     var searchInput = document.getElementById('search-input');
     var fileInput = document.getElementById('file-input');
@@ -624,10 +633,12 @@ function renderBrowser() {
                             '<div class="alert alert-error">' + esc(data.error) + '</div>';
                         return;
                     }
+                    var shareUrl = window.location.origin + '/app/#share/' + data.id;
+                    if (pw) shareUrl += '/' + pw;
                     document.getElementById('share-result').innerHTML =
                         '<div class="alert alert-success">Share link created!</div>' +
                         '<div class="share-url">' +
-                            '<input type="text" id="share-url-input" readonly value="' + esc(data.url) + '">' +
+                            '<input type="text" id="share-url-input" readonly value="' + esc(shareUrl) + '">' +
                             '<button class="btn btn-sm" id="btn-copy-url">Copy</button>' +
                         '</div>';
                     document.getElementById('btn-copy-url').addEventListener('click', function() {
