@@ -1239,7 +1239,9 @@ function renderGallery() {
 
         // My Tags section — all users
         html += '<div class="settings-section">' +
-            '<div class="settings-section-title">My Tags</div>' +
+            '<div class="settings-section-title"><span>My Tags</span>' +
+                '<button class="btn btn-sm" id="settings-add-tag">Add Tag</button>' +
+            '</div>' +
             '<div class="settings-section-desc">Rename or delete your manual tags. Only affects tags you added on files you can access.</div>' +
             '<div id="settings-user-tags">Loading...</div>' +
         '</div>';
@@ -1284,6 +1286,14 @@ function renderGallery() {
                     Modal.close = origClose;
                     loadSettingsAlbums();
                 };
+            });
+        }
+
+        // Wire add tag button
+        var addTagBtn = document.getElementById('settings-add-tag');
+        if (addTagBtn) {
+            addTagBtn.addEventListener('click', function() {
+                showAddTagModal();
             });
         }
 
@@ -1401,6 +1411,141 @@ function renderGallery() {
         }).catch(function() {
             el.innerHTML = '<p style="color:var(--text-muted)">Failed to load tags</p>';
         });
+    }
+
+    // ── Settings: Add Tag Modal ─────────────────────────────────────────────
+
+    function showAddTagModal() {
+        var contentDiv = document.createElement('div');
+        contentDiv.innerHTML =
+            '<form id="add-tag-form">' +
+                '<div class="form-group">' +
+                    '<label for="add-tag-name">Tag Name</label>' +
+                    '<input type="text" id="add-tag-name" required placeholder="e.g. vacation, portrait...">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Select Images</label>' +
+                    '<input type="text" id="add-tag-img-search" placeholder="Search images...">' +
+                    '<div id="add-tag-img-list" class="add-tag-img-list">Loading...</div>' +
+                '</div>' +
+                '<button type="submit" class="btn">Add Tag</button>' +
+            '</form>';
+
+        Modal.open({
+            title: 'Add Tag to Images',
+            content: contentDiv
+        });
+
+        var selectedPaths = {};
+        var allImages = [];
+
+        // Load gallery images
+        API.get('/api/v1/gallery/search?limit=200&offset=0&sort_by=date&sort_order=desc').then(function(data) {
+            allImages = (data && data.items) ? data.items : [];
+            renderAddTagImageList(allImages, selectedPaths);
+        }).catch(function() {
+            var list = document.getElementById('add-tag-img-list');
+            if (list) list.innerHTML = '<p style="color:var(--text-muted)">Failed to load images</p>';
+        });
+
+        // Search filter
+        var searchInput = document.getElementById('add-tag-img-search');
+        var searchTimer = null;
+        if (searchInput) {
+            searchInput.addEventListener('input', function() {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(function() {
+                    var q = searchInput.value.trim().toLowerCase();
+                    if (!q) {
+                        renderAddTagImageList(allImages, selectedPaths);
+                        return;
+                    }
+                    var filtered = [];
+                    for (var i = 0; i < allImages.length; i++) {
+                        if (allImages[i].file_name.toLowerCase().indexOf(q) !== -1 ||
+                            allImages[i].file_path.toLowerCase().indexOf(q) !== -1) {
+                            filtered.push(allImages[i]);
+                        }
+                    }
+                    renderAddTagImageList(filtered, selectedPaths);
+                }, 250);
+            });
+        }
+
+        // Submit
+        document.getElementById('add-tag-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var tagName = document.getElementById('add-tag-name').value.trim();
+            if (!tagName) { Toast.error('Tag name is required'); return; }
+
+            var paths = [];
+            for (var p in selectedPaths) {
+                if (selectedPaths[p]) paths.push(p);
+            }
+            if (paths.length === 0) { Toast.error('Select at least one image'); return; }
+
+            var done = 0;
+            var errors = 0;
+            for (var i = 0; i < paths.length; i++) {
+                (function(filePath) {
+                    API.post('/api/v1/gallery/tags/' + API.encodeURIPath(filePath.replace(/^\//, '')), { tag: tagName })
+                        .then(function(resp) {
+                            if (!resp.ok) errors++;
+                            done++;
+                            if (done === paths.length) {
+                                if (errors > 0) {
+                                    Toast.error(errors + ' image(s) failed');
+                                } else {
+                                    Toast.success('Tag "' + tagName + '" added to ' + paths.length + ' image(s)');
+                                }
+                                Modal.close();
+                                loadSettingsUserTags();
+                            }
+                        })
+                        .catch(function() {
+                            errors++;
+                            done++;
+                            if (done === paths.length) {
+                                Toast.error(errors + ' image(s) failed');
+                                Modal.close();
+                                loadSettingsUserTags();
+                            }
+                        });
+                })(paths[i]);
+            }
+        });
+    }
+
+    function renderAddTagImageList(images, selectedPaths) {
+        var list = document.getElementById('add-tag-img-list');
+        if (!list) return;
+
+        if (!images || images.length === 0) {
+            list.innerHTML = '<p style="color:var(--text-muted)">No images found</p>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < images.length; i++) {
+            var img = images[i];
+            var checked = selectedPaths[img.file_path] ? ' checked' : '';
+            html += '<label class="add-tag-img-row">' +
+                '<input type="checkbox" data-path="' + esc(img.file_path) + '"' + checked + '>' +
+                '<span class="add-tag-img-name">' + esc(img.file_name) + '</span>' +
+            '</label>';
+        }
+        list.innerHTML = html;
+
+        // Wire checkboxes
+        var boxes = list.querySelectorAll('input[type="checkbox"]');
+        for (var b = 0; b < boxes.length; b++) {
+            (function(box) {
+                box.addEventListener('change', function() {
+                    var path = box.getAttribute('data-path');
+                    selectedPaths[path] = box.checked;
+                });
+            })(boxes[b]);
+        }
     }
 
     // ── Shared tag table renderer ────────────────────────────────────────────
