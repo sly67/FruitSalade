@@ -2331,6 +2331,28 @@ mark {
     font-size: 0.9rem;
 }
 
+/* Settings Section Cards */
+.settings-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+}
+.settings-section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.settings-section-desc {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+}
+
 /* Gallery Toolbar Search */
 
 .gallery-toolbar-search {

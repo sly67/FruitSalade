@@ -607,6 +607,71 @@ func (s *GalleryStore) GetAlbumsForImage(ctx context.Context, filePath string) (
 	return albums, rows.Err()
 }
 
+// ─── Per-User Tag Management ─────────────────────────────────────────────────
+
+// DeleteTagForUser removes manual tags matching the given name from files
+// the user has access to (determined by pf). Returns rows affected.
+func (s *GalleryStore) DeleteTagForUser(ctx context.Context, tag string, pf *PermFilter) (int64, error) {
+	if pf == nil {
+		// Admin — delete manual tags globally
+		res, err := s.db.ExecContext(ctx,
+			`DELETE FROM image_tags WHERE tag = $1 AND source = 'manual'`, tag)
+		if err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
+	}
+	query := fmt.Sprintf(
+		`DELETE FROM image_tags WHERE tag = $1 AND source = 'manual'
+		 AND file_path IN (SELECT f.path FROM files f WHERE %s)`,
+		pf.Condition)
+	args := append([]interface{}{tag}, pf.Args...)
+	res, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// RenameTagForUser renames manual tags on files the user has access to.
+// Handles conflicts by deleting the old tag where the new tag already exists.
+func (s *GalleryStore) RenameTagForUser(ctx context.Context, oldTag, newTag string, pf *PermFilter) (int64, error) {
+	if pf == nil {
+		// Admin — rename manual tags globally
+		s.db.ExecContext(ctx, `
+			DELETE FROM image_tags WHERE tag = $1 AND source = 'manual'
+			AND file_path IN (SELECT file_path FROM image_tags WHERE tag = $2)`,
+			oldTag, newTag)
+		res, err := s.db.ExecContext(ctx,
+			`UPDATE image_tags SET tag = $1 WHERE tag = $2 AND source = 'manual'`, newTag, oldTag)
+		if err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
+	}
+
+	// Scoped: remove conflicts first
+	conflictQuery := fmt.Sprintf(
+		`DELETE FROM image_tags WHERE tag = $1 AND source = 'manual'
+		 AND file_path IN (SELECT file_path FROM image_tags WHERE tag = $2)
+		 AND file_path IN (SELECT f.path FROM files f WHERE %s)`,
+		pf.Condition)
+	conflictArgs := append([]interface{}{oldTag, newTag}, pf.Args...)
+	s.db.ExecContext(ctx, conflictQuery, conflictArgs...)
+
+	// Then rename remaining
+	renameQuery := fmt.Sprintf(
+		`UPDATE image_tags SET tag = $1 WHERE tag = $2 AND source = 'manual'
+		 AND file_path IN (SELECT f.path FROM files f WHERE %s)`,
+		pf.Condition)
+	renameArgs := append([]interface{}{newTag, oldTag}, pf.Args...)
+	res, err := s.db.ExecContext(ctx, renameQuery, renameArgs...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // ─── Global Tag Management ──────────────────────────────────────────────────
 
 // DeleteTagGlobal removes a tag from all images. Returns the number of rows affected.

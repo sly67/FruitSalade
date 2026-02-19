@@ -301,6 +301,10 @@ func (s *Server) Handler() http.Handler {
 		protected.HandleFunc("PUT /api/v1/gallery/albums/{id}/cover", s.handleSetAlbumCover)
 		protected.HandleFunc("GET /api/v1/gallery/image-albums/{path...}", s.handleGetAlbumsForImage)
 
+		// Per-user tag management
+		protected.HandleFunc("DELETE /api/v1/gallery/user-tags/{tag}", s.handleDeleteUserTag)
+		protected.HandleFunc("PUT /api/v1/gallery/user-tags/{tag}", s.handleRenameUserTag)
+
 		// Admin gallery plugin endpoints
 		protected.HandleFunc("GET /api/v1/admin/gallery/plugins", s.handleListPlugins)
 		protected.HandleFunc("POST /api/v1/admin/gallery/plugins", s.handleCreatePlugin)

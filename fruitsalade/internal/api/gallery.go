@@ -36,6 +36,25 @@ func (s *Server) galleryPermFilter(ctx context.Context, claims *auth.Claims) *ga
 	return gallery.BuildPermFilter(1, claims.UserID, groupIDs, permPaths, false)
 }
 
+// galleryPermFilterAt builds a PermFilter starting at the given argStart.
+// Useful when the query already has $1..$(argStart-1) reserved for other params.
+func (s *Server) galleryPermFilterAt(ctx context.Context, claims *auth.Claims, argStart int) *gallery.PermFilter {
+	if claims.IsAdmin {
+		return nil
+	}
+	userGroups, _ := s.groups.GetUserGroupsMap(ctx, claims.UserID)
+	var groupIDs []int
+	for gid := range userGroups {
+		groupIDs = append(groupIDs, gid)
+	}
+	userPerms, _ := s.permissions.GetUserPermissionsMap(ctx, claims.UserID)
+	var permPaths []string
+	for path := range userPerms {
+		permPaths = append(permPaths, path)
+	}
+	return gallery.BuildPermFilter(argStart, claims.UserID, groupIDs, permPaths, false)
+}
+
 // ─── Gallery Search ─────────────────────────────────────────────────────────
 
 func (s *Server) handleGallerySearch(w http.ResponseWriter, r *http.Request) {
@@ -1152,6 +1171,83 @@ func (s *Server) handleRenameTagGlobal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logging.Info("global tag renamed", zap.String("from", tag), zap.String("to", req.NewTag), zap.Int64("affected", count))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"old_tag":  tag,
+		"new_tag":  req.NewTag,
+		"affected": count,
+	})
+}
+
+// ─── Per-User Tag Management ─────────────────────────────────────────────────
+
+func (s *Server) handleDeleteUserTag(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	tag := r.PathValue("tag")
+	if tag == "" {
+		s.sendError(w, http.StatusBadRequest, "tag is required")
+		return
+	}
+
+	// Build PermFilter with argStart=2 (tag is $1)
+	pf := s.galleryPermFilterAt(r.Context(), claims, 2)
+
+	count, err := s.galleryStore.DeleteTagForUser(r.Context(), tag, pf)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to delete tag: "+err.Error())
+		return
+	}
+
+	logging.Info("user tag deleted", zap.String("tag", tag), zap.Int("user_id", claims.UserID), zap.Int64("affected", count))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"tag":      tag,
+		"deleted":  true,
+		"affected": count,
+	})
+}
+
+func (s *Server) handleRenameUserTag(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	tag := r.PathValue("tag")
+	if tag == "" {
+		s.sendError(w, http.StatusBadRequest, "tag is required")
+		return
+	}
+
+	var req protocol.GlobalTagActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.NewTag == "" {
+		s.sendError(w, http.StatusBadRequest, "new_tag is required")
+		return
+	}
+
+	// Build PermFilter with argStart=3 (oldTag=$1, newTag=$2)
+	pf := s.galleryPermFilterAt(r.Context(), claims, 3)
+
+	count, err := s.galleryStore.RenameTagForUser(r.Context(), tag, req.NewTag, pf)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to rename tag: "+err.Error())
+		return
+	}
+
+	logging.Info("user tag renamed", zap.String("from", tag), zap.String("to", req.NewTag),
+		zap.Int("user_id", claims.UserID), zap.Int64("affected", count))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

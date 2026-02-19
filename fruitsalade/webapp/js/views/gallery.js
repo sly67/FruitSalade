@@ -64,7 +64,7 @@ function renderGallery() {
             '<button class="gallery-page-tab" data-page="albums">Albums</button>' +
             '<button class="gallery-page-tab" data-page="tags">Tags</button>' +
             '<button class="gallery-page-tab" data-page="map">Map</button>' +
-            (sessionStorage.getItem('is_admin') === 'true' ? '<button class="gallery-page-tab" data-page="settings">Settings</button>' : '') +
+            '<button class="gallery-page-tab" data-page="settings">Settings</button>' +
         '</div>' +
         '<div id="gallery-album-breadcrumb" class="gallery-album-breadcrumb hidden"></div>' +
         '<div id="gallery-status"></div>' +
@@ -1194,7 +1194,9 @@ function renderGallery() {
         }
     }
 
-    // ── Settings Page (Tag Management) ─────────────────────────────────────
+    // ── Settings Page ─────────────────────────────────────────────────────────
+
+    var isAdmin = sessionStorage.getItem('is_admin') === 'true';
 
     function renderSettingsPage() {
         var container = document.getElementById('gallery-container');
@@ -1202,33 +1204,192 @@ function renderGallery() {
         cleanupObjectURLs();
 
         container.className = '';
-        container.innerHTML =
-            '<div class="gallery-settings-page">' +
-                '<h3 class="gallery-settings-title">Tag Management</h3>' +
-                '<p class="gallery-settings-desc">Rename or delete tags globally across all images.</p>' +
-                '<div id="gallery-tag-mgmt">Loading tags...</div>' +
-            '</div>';
+        var html = '<div class="gallery-settings-page">';
 
-        loadSettingsTags();
+        // My Albums section — all users
+        html += '<div class="settings-section">' +
+            '<div class="settings-section-title"><span>My Albums</span>' +
+                '<button class="btn btn-sm" id="settings-new-album">New Album</button>' +
+            '</div>' +
+            '<div class="settings-section-desc">Manage your custom photo albums.</div>' +
+            '<div id="settings-albums-content">Loading...</div>' +
+        '</div>';
+
+        // My Tags section — all users
+        html += '<div class="settings-section">' +
+            '<div class="settings-section-title">My Tags</div>' +
+            '<div class="settings-section-desc">Rename or delete your manual tags. Only affects tags you added on files you can access.</div>' +
+            '<div id="settings-user-tags">Loading...</div>' +
+        '</div>';
+
+        // Global Tag Management — admin only
+        if (isAdmin) {
+            html += '<div class="settings-section">' +
+                '<div class="settings-section-title">Global Tag Management</div>' +
+                '<div class="settings-section-desc">Rename or delete tags globally across all images and all sources (admin only).</div>' +
+                '<div id="settings-global-tags">Loading...</div>' +
+            '</div>';
+        }
+
+        // Plugins — admin only
+        if (isAdmin) {
+            html += '<div class="settings-section">' +
+                '<div class="settings-section-title">Auto-Tagging Plugins</div>' +
+                '<div class="settings-section-desc">Manage external tagging plugins (admin only).</div>' +
+                '<div id="settings-plugins-link">' +
+                    '<button class="btn btn-sm btn-outline" id="settings-open-plugins">Manage Plugins</button>' +
+                '</div>' +
+            '</div>';
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+
+        // Load sections
+        loadSettingsAlbums();
+        loadSettingsUserTags();
+        if (isAdmin) loadSettingsGlobalTags();
+
+        // Wire new album button
+        var newAlbumBtn = document.getElementById('settings-new-album');
+        if (newAlbumBtn) {
+            newAlbumBtn.addEventListener('click', function() {
+                showAlbumModal(null);
+                // After modal closes, refresh the album list
+                var origClose = Modal.close;
+                Modal.close = function() {
+                    origClose();
+                    Modal.close = origClose;
+                    loadSettingsAlbums();
+                };
+            });
+        }
+
+        // Wire plugins link (just switch to plugins page if it exists, else alert)
+        var pluginsBtn = document.getElementById('settings-open-plugins');
+        if (pluginsBtn) {
+            pluginsBtn.addEventListener('click', function() {
+                window.location.hash = '#gallery-plugins';
+            });
+        }
     }
 
-    function loadSettingsTags() {
-        API.get('/api/v1/gallery/tags').then(function(tags) {
-            renderSettingsTagTable(tags || []);
+    // ── Settings: My Albums ──────────────────────────────────────────────────
+
+    function loadSettingsAlbums() {
+        var el = document.getElementById('settings-albums-content');
+        if (!el) return;
+
+        API.get('/api/v1/gallery/albums').then(function(albums) {
+            renderSettingsAlbumsTable(el, albums || []);
         }).catch(function() {
-            var el = document.getElementById('gallery-tag-mgmt');
-            if (el) el.innerHTML = '<p style="color:var(--text-muted)">Failed to load tags</p>';
+            el.innerHTML = '<p style="color:var(--text-muted)">Failed to load albums</p>';
         });
     }
 
-    function renderSettingsTagTable(tags) {
-        var el = document.getElementById('gallery-tag-mgmt');
+    function renderSettingsAlbumsTable(el, albums) {
+        if (!albums || albums.length === 0) {
+            el.innerHTML = '<p style="color:var(--text-muted)">No albums yet. Click "New Album" to create one.</p>';
+            return;
+        }
+
+        var html = '<div class="table-container"><table class="data-table">' +
+            '<thead><tr>' +
+                '<th>Name</th>' +
+                '<th>Description</th>' +
+                '<th>Images</th>' +
+                '<th>Created</th>' +
+                '<th>Actions</th>' +
+            '</tr></thead><tbody>';
+
+        for (var i = 0; i < albums.length; i++) {
+            var a = albums[i];
+            var desc = a.description || '';
+            if (desc.length > 60) desc = desc.substring(0, 60) + '...';
+            var created = a.created_at ? formatGalleryDate(a.created_at) : '-';
+            html += '<tr>' +
+                '<td>' + esc(a.name) + '</td>' +
+                '<td>' + esc(desc) + '</td>' +
+                '<td>' + esc(String(a.image_count)) + '</td>' +
+                '<td>' + esc(created) + '</td>' +
+                '<td>' +
+                    '<div class="btn-group">' +
+                        '<button class="btn btn-sm btn-outline" data-action="edit-settings-album" data-id="' + a.id + '">Edit</button>' +
+                        '<button class="btn btn-sm btn-danger" data-action="delete-settings-album" data-id="' + a.id + '">Delete</button>' +
+                    '</div>' +
+                '</td>' +
+            '</tr>';
+        }
+
+        html += '</tbody></table></div>';
+        el.innerHTML = html;
+
+        // Wire actions
+        var btns = el.querySelectorAll('[data-action]');
+        for (var b = 0; b < btns.length; b++) {
+            (function(btn) {
+                btn.addEventListener('click', function() {
+                    var action = btn.getAttribute('data-action');
+                    var id = parseInt(btn.getAttribute('data-id'), 10);
+                    if (action === 'edit-settings-album') {
+                        var album = null;
+                        for (var k = 0; k < albums.length; k++) {
+                            if (albums[k].id === id) { album = albums[k]; break; }
+                        }
+                        showAlbumModal(album);
+                        var origClose = Modal.close;
+                        Modal.close = function() {
+                            origClose();
+                            Modal.close = origClose;
+                            loadSettingsAlbums();
+                        };
+                    } else if (action === 'delete-settings-album') {
+                        if (!confirm('Delete this album? Images will not be deleted.')) return;
+                        API.del('/api/v1/gallery/albums/' + id).then(function() {
+                            Toast.success('Album deleted');
+                            loadSettingsAlbums();
+                        }).catch(function() { Toast.error('Failed to delete album'); });
+                    }
+                });
+            })(btns[b]);
+        }
+    }
+
+    // ── Settings: My Tags ────────────────────────────────────────────────────
+
+    function loadSettingsUserTags() {
+        var el = document.getElementById('settings-user-tags');
         if (!el) return;
 
+        API.get('/api/v1/gallery/tags').then(function(tags) {
+            renderSettingsTagTable(el, tags || [], 'user');
+        }).catch(function() {
+            el.innerHTML = '<p style="color:var(--text-muted)">Failed to load tags</p>';
+        });
+    }
+
+    // ── Settings: Global Tags (admin) ────────────────────────────────────────
+
+    function loadSettingsGlobalTags() {
+        var el = document.getElementById('settings-global-tags');
+        if (!el) return;
+
+        API.get('/api/v1/gallery/tags').then(function(tags) {
+            renderSettingsTagTable(el, tags || [], 'global');
+        }).catch(function() {
+            el.innerHTML = '<p style="color:var(--text-muted)">Failed to load tags</p>';
+        });
+    }
+
+    // ── Shared tag table renderer ────────────────────────────────────────────
+
+    function renderSettingsTagTable(el, tags, scope) {
         if (!tags || tags.length === 0) {
             el.innerHTML = '<p style="color:var(--text-muted)">No tags found.</p>';
             return;
         }
+
+        var actionPrefix = scope === 'global' ? 'global-' : 'user-';
 
         var html = '<div class="table-container"><table class="data-table">' +
             '<thead><tr>' +
@@ -1244,8 +1405,8 @@ function renderGallery() {
                 '<td>' + esc(String(tag.count)) + '</td>' +
                 '<td>' +
                     '<div class="btn-group">' +
-                        '<button class="btn btn-sm btn-outline" data-action="rename-tag" data-tag="' + esc(tag.tag) + '">Rename</button>' +
-                        '<button class="btn btn-sm btn-danger" data-action="delete-tag" data-tag="' + esc(tag.tag) + '">Delete</button>' +
+                        '<button class="btn btn-sm btn-outline" data-action="' + actionPrefix + 'rename-tag" data-tag="' + esc(tag.tag) + '">Rename</button>' +
+                        '<button class="btn btn-sm btn-danger" data-action="' + actionPrefix + 'delete-tag" data-tag="' + esc(tag.tag) + '">Delete</button>' +
                     '</div>' +
                 '</td>' +
             '</tr>';
@@ -1261,22 +1422,32 @@ function renderGallery() {
                 btn.addEventListener('click', function() {
                     var action = btn.getAttribute('data-action');
                     var tagName = btn.getAttribute('data-tag');
-                    if (action === 'rename-tag') {
-                        showSettingsRenameModal(tagName);
-                    } else if (action === 'delete-tag') {
-                        settingsDeleteTag(tagName);
+                    if (action === 'user-rename-tag') {
+                        showSettingsRenameModal(tagName, 'user');
+                    } else if (action === 'user-delete-tag') {
+                        settingsDeleteTag(tagName, 'user');
+                    } else if (action === 'global-rename-tag') {
+                        showSettingsRenameModal(tagName, 'global');
+                    } else if (action === 'global-delete-tag') {
+                        settingsDeleteTag(tagName, 'global');
                     }
                 });
             })(btns[b]);
         }
     }
 
-    function showSettingsRenameModal(tag) {
+    function showSettingsRenameModal(tag, scope) {
+        var endpoint = scope === 'global'
+            ? '/api/v1/admin/gallery/tags/' + encodeURIComponent(tag)
+            : '/api/v1/gallery/user-tags/' + encodeURIComponent(tag);
+        var scopeLabel = scope === 'global' ? 'globally across all images' : 'on your accessible files (manual tags only)';
+
         var contentDiv = document.createElement('div');
         contentDiv.innerHTML =
             '<form id="rename-tag-form">' +
                 '<div class="form-group">' +
                     '<label>Current tag: <strong>' + esc(tag) + '</strong></label>' +
+                    '<p class="settings-section-desc" style="margin-top:0.25rem">This will rename the tag ' + scopeLabel + '.</p>' +
                 '</div>' +
                 '<div class="form-group">' +
                     '<label for="new-tag-name">New Name</label>' +
@@ -1295,13 +1466,14 @@ function renderGallery() {
             var newTag = document.getElementById('new-tag-name').value.trim();
             if (!newTag) { Toast.error('New tag name is required'); return; }
 
-            API.put('/api/v1/admin/gallery/tags/' + encodeURIComponent(tag), { new_tag: newTag })
+            API.put(endpoint, { new_tag: newTag })
                 .then(function(resp) {
                     if (resp.ok) {
                         return resp.json().then(function(data) {
                             Toast.success('Tag renamed (' + (data.affected || 0) + ' images updated)');
                             Modal.close();
-                            loadSettingsTags();
+                            if (scope === 'global') loadSettingsGlobalTags();
+                            else loadSettingsUserTags();
                         });
                     } else {
                         return resp.json().then(function(d) { Toast.error(d.error || 'Failed'); });
@@ -1311,15 +1483,23 @@ function renderGallery() {
         });
     }
 
-    function settingsDeleteTag(tag) {
-        if (!confirm('Delete tag "' + tag + '" from all images? This cannot be undone.')) return;
+    function settingsDeleteTag(tag, scope) {
+        var endpoint = scope === 'global'
+            ? '/api/v1/admin/gallery/tags/' + encodeURIComponent(tag)
+            : '/api/v1/gallery/user-tags/' + encodeURIComponent(tag);
+        var scopeLabel = scope === 'global'
+            ? 'Delete tag "' + tag + '" from ALL images (all sources)? This cannot be undone.'
+            : 'Delete tag "' + tag + '" from your accessible files (manual tags only)? This cannot be undone.';
 
-        API.del('/api/v1/admin/gallery/tags/' + encodeURIComponent(tag))
+        if (!confirm(scopeLabel)) return;
+
+        API.del(endpoint)
             .then(function(resp) {
                 if (resp.ok) {
                     return resp.json().then(function(data) {
                         Toast.success('Tag deleted (' + (data.affected || 0) + ' images affected)');
-                        loadSettingsTags();
+                        if (scope === 'global') loadSettingsGlobalTags();
+                        else loadSettingsUserTags();
                     });
                 } else {
                     return resp.json().then(function(d) { Toast.error(d.error || 'Failed'); });
