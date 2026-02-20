@@ -1,30 +1,54 @@
-// Version explorer — browse all versioned files or view a single file's history
+// File Management — Versions tab + Conflicts tab
 function renderVersions() {
     var hash = window.location.hash.replace('#versions', '').replace(/^\//, '');
 
-    if (!hash) {
-        renderVersionExplorer();
-    } else {
+    // If viewing a specific file's versions, go directly there (no tabs)
+    if (hash) {
         var filePath = '/' + decodeURIComponent(hash);
         renderFileVersions(filePath);
+        return;
     }
-}
 
-// ─── Version Explorer (all versioned files) ─────────────────────────────────
-
-function renderVersionExplorer() {
+    // Top-level: show tabs
     var app = document.getElementById('app');
     app.innerHTML =
-        '<div class="toolbar">' +
-            '<h2>Version Explorer</h2>' +
-            '<div class="toolbar-actions">' +
+        '<div class="toolbar"><h2>File Management</h2></div>' +
+        '<div class="fm-tab-nav">' +
+            '<button class="fm-tab active" data-fm-tab="versions">Versions</button>' +
+            '<button class="fm-tab" data-fm-tab="conflicts">Conflicts</button>' +
+        '</div>' +
+        '<div id="fm-tab-content"></div>';
+
+    // Wire tab clicks
+    var tabs = app.querySelectorAll('.fm-tab');
+    tabs.forEach(function(tab) {
+        tab.addEventListener('click', function() {
+            tabs.forEach(function(t) { t.classList.remove('active'); });
+            tab.classList.add('active');
+            var target = tab.getAttribute('data-fm-tab');
+            if (target === 'versions') renderVersionExplorerTab();
+            else renderConflictsTab();
+        });
+    });
+
+    // Default tab
+    renderVersionExplorerTab();
+}
+
+// ─── Version Explorer Tab ───────────────────────────────────────────────────
+
+function renderVersionExplorerTab() {
+    var container = document.getElementById('fm-tab-content');
+    container.innerHTML =
+        '<div style="padding:0 1.5rem">' +
+            '<div class="toolbar-actions" style="margin-bottom:0.75rem">' +
                 '<div class="search-wrap">' +
                     '<input type="text" id="ver-search" placeholder="Filter files...">' +
                 '</div>' +
             '</div>' +
-        '</div>' +
-        '<div id="ver-stats" class="ver-stats"></div>' +
-        '<div id="ver-table" class="table-wrap">Loading...</div>';
+            '<div id="ver-stats" class="ver-stats"></div>' +
+            '<div id="ver-table" class="table-wrap">Loading...</div>' +
+        '</div>';
 
     API.get('/api/v1/versions').then(function(files) {
         if (!files || files.length === 0) {
@@ -292,6 +316,272 @@ function handleDiff(filePath, version) {
     });
 }
 
+// ─── Conflicts Tab ──────────────────────────────────────────────────────────
+
+function renderConflictsTab() {
+    var container = document.getElementById('fm-tab-content');
+    container.innerHTML = '<div class="fm-conflicts-loading">Scanning for conflicts...</div>';
+
+    API.get('/api/v1/tree').then(function(tree) {
+        var conflicts = findConflictFiles(tree);
+        if (conflicts.length === 0) {
+            container.innerHTML =
+                '<div class="fm-conflicts-empty">' +
+                    '<p>No conflicts found</p>' +
+                    '<p class="props-muted">Conflicts are created when two devices edit the same file simultaneously.</p>' +
+                '</div>';
+            return;
+        }
+        renderConflictList(container, conflicts);
+    }).catch(function() {
+        container.innerHTML = '<div class="alert alert-error" style="margin:1.5rem">Failed to load file tree</div>';
+    });
+}
+
+function flattenTree(node, result) {
+    result = result || [];
+    if (!node) return result;
+    if (!node.is_dir) {
+        result.push(node);
+    }
+    if (node.children) {
+        for (var i = 0; i < node.children.length; i++) {
+            flattenTree(node.children[i], result);
+        }
+    }
+    return result;
+}
+
+function findConflictFiles(tree) {
+    var allFiles = flattenTree(tree);
+    var conflicts = [];
+    var re = /^(.+) \(conflict (\d{4}-\d{2}-\d{2})\)(\.[^.]*)?$/;
+
+    for (var i = 0; i < allFiles.length; i++) {
+        var f = allFiles[i];
+        var name = f.name;
+        var match = name.match(re);
+        if (!match) continue;
+
+        var originalBase = match[1];
+        var date = match[2];
+        var ext = match[3] || '';
+        var dir = f.path.substring(0, f.path.lastIndexOf('/'));
+        var originalPath = dir + '/' + originalBase + ext;
+
+        // Find the original file in the tree
+        var original = null;
+        for (var j = 0; j < allFiles.length; j++) {
+            if (allFiles[j].path === originalPath) {
+                original = allFiles[j];
+                break;
+            }
+        }
+
+        conflicts.push({
+            conflictFile: f,
+            originalFile: original,
+            originalPath: originalPath,
+            conflictDate: date
+        });
+    }
+
+    // Sort by date descending (newest first)
+    conflicts.sort(function(a, b) { return b.conflictDate.localeCompare(a.conflictDate); });
+    return conflicts;
+}
+
+function renderConflictList(container, conflicts) {
+    var html = '<div class="fm-conflicts-header">' +
+        '<span class="badge badge-orange">' + conflicts.length + ' conflict' +
+        (conflicts.length !== 1 ? 's' : '') + '</span></div>';
+
+    html += '<div class="fm-conflict-cards">';
+    for (var i = 0; i < conflicts.length; i++) {
+        var c = conflicts[i];
+        var cf = c.conflictFile;
+        var of_ = c.originalFile;
+
+        html += '<div class="fm-conflict-card" data-index="' + i + '">' +
+            '<div class="fm-conflict-card-header">' +
+                '<span class="fm-conflict-icon">&#9888;</span>' +
+                '<div class="fm-conflict-info">' +
+                    '<div class="fm-conflict-name">' + esc(cf.name) + '</div>' +
+                    '<div class="fm-conflict-path"><code>' + esc(cf.path) + '</code></div>' +
+                    '<div class="fm-conflict-date">Conflict from ' + esc(c.conflictDate) + '</div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="fm-conflict-comparison">' +
+                '<div class="fm-conflict-side">' +
+                    '<strong>Original</strong>' +
+                    (of_ ? '<div>' + formatBytes(of_.size) + ' &middot; ' + formatDate(of_.mtime) + '</div>'
+                         : '<div class="props-muted">Not found (may have been deleted)</div>') +
+                '</div>' +
+                '<div class="fm-conflict-vs">vs</div>' +
+                '<div class="fm-conflict-side">' +
+                    '<strong>Conflict Copy</strong>' +
+                    '<div>' + formatBytes(cf.size) + ' &middot; ' + formatDate(cf.mtime) + '</div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="fm-conflict-actions">';
+
+        if (of_ && FileTypes.isText(cf.name)) {
+            html += '<button class="btn btn-sm btn-outline" data-action="diff" data-idx="' + i + '">Compare</button>';
+        }
+        html += '<button class="btn btn-sm btn-outline" data-action="preview-conflict" data-idx="' + i + '">Preview Conflict</button>';
+        if (of_) {
+            html += '<button class="btn btn-sm btn-outline" data-action="keep-original" data-idx="' + i + '">Keep Original</button>';
+        }
+        html += '<button class="btn btn-sm" data-action="keep-conflict" data-idx="' + i + '">Keep Conflict</button>';
+
+        html += '</div>' +
+            '<div class="fm-conflict-diff-area" id="conflict-diff-' + i + '"></div>' +
+            '</div>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
+
+    // Wire actions
+    container.querySelectorAll('[data-action]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var action = btn.getAttribute('data-action');
+            var idx = parseInt(btn.getAttribute('data-idx'), 10);
+            var c = conflicts[idx];
+
+            switch (action) {
+                case 'diff':
+                    handleConflictDiff(c, idx);
+                    break;
+                case 'preview-conflict':
+                    handleConflictPreview(c, idx);
+                    break;
+                case 'keep-original':
+                    handleKeepOriginal(c, container, conflicts);
+                    break;
+                case 'keep-conflict':
+                    handleKeepConflict(c, container, conflicts);
+                    break;
+            }
+        });
+    });
+}
+
+// ─── Conflict Actions ───────────────────────────────────────────────────────
+
+function handleConflictDiff(c, idx) {
+    var area = document.getElementById('conflict-diff-' + idx);
+    area.innerHTML = '<div class="ver-diff-panel"><div class="ver-diff-header">' +
+        '<span>Comparing original with conflict copy</span>' +
+        '<button class="btn btn-sm btn-outline conflict-close-btn">Close</button>' +
+        '</div><div class="ver-diff-body"><p class="props-muted">Loading both files...</p></div></div>';
+
+    area.querySelector('.conflict-close-btn').addEventListener('click', function() {
+        area.innerHTML = '';
+    });
+
+    var originalUrl = '/api/v1/content/' + API.encodeURIPath(c.originalFile.path.replace(/^\//, ''));
+    var conflictUrl = '/api/v1/content/' + API.encodeURIPath(c.conflictFile.path.replace(/^\//, ''));
+
+    Promise.all([
+        API.request('GET', originalUrl).then(function(r) { return r.text(); }),
+        API.request('GET', conflictUrl).then(function(r) { return r.text(); })
+    ]).then(function(results) {
+        var body = area.querySelector('.ver-diff-body');
+        if (!body) return;
+        body.innerHTML = computeDiff(results[0], results[1], 'Original');
+    }).catch(function() {
+        var body = area.querySelector('.ver-diff-body');
+        if (body) body.innerHTML = '<div class="alert alert-error">Failed to load file content</div>';
+    });
+}
+
+function handleConflictPreview(c, idx) {
+    var area = document.getElementById('conflict-diff-' + idx);
+    area.innerHTML = '<div class="ver-diff-panel"><div class="ver-diff-header">' +
+        '<span>Preview: ' + esc(c.conflictFile.name) + '</span>' +
+        '<button class="btn btn-sm btn-outline conflict-close-btn">Close</button>' +
+        '</div><div class="ver-diff-body"><p class="props-muted">Loading...</p></div></div>';
+
+    area.querySelector('.conflict-close-btn').addEventListener('click', function() {
+        area.innerHTML = '';
+    });
+
+    var url = '/api/v1/content/' + API.encodeURIPath(c.conflictFile.path.replace(/^\//, ''));
+
+    if (FileTypes.isText(c.conflictFile.name)) {
+        API.request('GET', url).then(function(r) { return r.text(); }).then(function(text) {
+            var body = area.querySelector('.ver-diff-body');
+            if (body) body.innerHTML = '<pre class="ver-code">' + esc(text) + '</pre>';
+        }).catch(function() {
+            var body = area.querySelector('.ver-diff-body');
+            if (body) body.innerHTML = '<div class="alert alert-error">Failed to load file</div>';
+        });
+    } else {
+        var type = FileTypes.detect(c.conflictFile.name);
+        var body = area.querySelector('.ver-diff-body');
+        if (type === 'image') {
+            body.innerHTML = '<div style="padding:1rem;text-align:center"><img src="' +
+                esc(API.downloadUrl(c.conflictFile.path.replace(/^\//, ''))) +
+                '" style="max-width:100%;max-height:400px"></div>';
+        } else {
+            body.innerHTML = '<div style="padding:1rem;text-align:center">' +
+                '<a class="btn btn-sm" href="' + esc(API.downloadUrl(c.conflictFile.path.replace(/^\//, ''))) +
+                '" download>Download to preview</a></div>';
+        }
+    }
+}
+
+function handleKeepOriginal(c, container, conflicts) {
+    if (!confirm('Delete the conflict copy?\n\n' + c.conflictFile.path)) return;
+
+    var conflictApiPath = c.conflictFile.path.replace(/^\//, '');
+    API.del('/api/v1/tree/' + API.encodeURIPath(conflictApiPath))
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('Delete failed');
+            Toast.success('Conflict resolved: kept original');
+            renderConflictsTab();
+        }).catch(function() {
+            Toast.error('Failed to delete conflict copy');
+        });
+}
+
+function handleKeepConflict(c, container, conflicts) {
+    var msg = c.originalFile
+        ? 'Replace the original with the conflict copy?\n\nOriginal: ' + c.originalPath + '\nConflict: ' + c.conflictFile.path
+        : 'Rename conflict copy to original path?\n\n' + c.conflictFile.path + ' -> ' + c.originalPath;
+
+    if (!confirm(msg)) return;
+
+    // Download conflict content, upload to original path, delete conflict
+    var conflictApiPath = c.conflictFile.path.replace(/^\//, '');
+    var originalApiPath = c.originalPath.replace(/^\//, '');
+
+    API.request('GET', '/api/v1/content/' + API.encodeURIPath(conflictApiPath))
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('Failed to download conflict file');
+            return resp.blob();
+        })
+        .then(function(blob) {
+            // Upload conflict content to original path
+            return API.request('POST', '/api/v1/content/' + API.encodeURIPath(originalApiPath), undefined, blob);
+        })
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('Failed to upload to original path');
+            // Delete the conflict copy
+            return API.del('/api/v1/tree/' + API.encodeURIPath(conflictApiPath));
+        })
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('Failed to delete conflict copy');
+            Toast.success('Conflict resolved: kept conflict copy');
+            renderConflictsTab();
+        })
+        .catch(function(err) {
+            Toast.error('Failed to resolve conflict: ' + err.message);
+        });
+}
+
+// ─── Diff Utilities ─────────────────────────────────────────────────────────
+
 // Simple line-based diff
 function computeDiff(oldText, newText, oldVersion) {
     var oldLines = oldText.split('\n');
@@ -416,4 +706,3 @@ function simpleDiff(a, b) {
     }
     return ops;
 }
-
