@@ -323,7 +323,7 @@ function renderConflictsTab() {
     container.innerHTML = '<div class="fm-conflicts-loading">Scanning for conflicts...</div>';
 
     API.get('/api/v1/tree').then(function(tree) {
-        var conflicts = findConflictFiles(tree);
+        var conflicts = findConflictFiles(tree.root);
         if (conflicts.length === 0) {
             container.innerHTML =
                 '<div class="fm-conflicts-empty">' +
