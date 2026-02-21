@@ -18,22 +18,32 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/fruitsalade/fruitsalade/shared/pkg/cache"
+	"github.com/fruitsalade/fruitsalade/shared/pkg/client"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/fuse"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/logger"
+	"golang.org/x/term"
 )
 
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "login":
+			cmdLogin(os.Args[2:])
+			return
+		case "logout":
+			cmdLogout(os.Args[2:])
+			return
 		case "pin":
 			cmdPin(os.Args[2:])
 			return
@@ -88,8 +98,23 @@ func cmdMount() {
 		*token = os.Getenv("FRUITSALADE_TOKEN")
 	}
 
+	// Auto-load from token file if no token provided
+	var tokenFile *client.TokenFile
 	if *token == "" {
-		fmt.Fprintf(os.Stderr, "Error: -token or FRUITSALADE_TOKEN environment variable required\n")
+		tf, err := client.LoadToken()
+		if err == nil {
+			if tf.IsExpired(0) {
+				fmt.Fprintf(os.Stderr, "Error: saved token has expired. Run 'fruitsalade-fuse login' to authenticate.\n")
+				os.Exit(1)
+			}
+			*token = tf.Token
+			tokenFile = tf
+			logger.Info("Using saved token for %s@%s", tf.Username, tf.Server)
+		}
+	}
+
+	if *token == "" {
+		fmt.Fprintf(os.Stderr, "Error: no token available. Use -token, FRUITSALADE_TOKEN, or run 'fruitsalade-fuse login'\n")
 		os.Exit(1)
 	}
 
@@ -135,6 +160,11 @@ func cmdMount() {
 	fruitFS.StartSSEWatch(ctx)
 	fruitFS.StartHealthCheck(ctx)
 
+	// Start token refresh loop if using a saved token file
+	if tokenFile != nil {
+		fruitFS.Client().StartTokenRefreshLoop(ctx, tokenFile)
+	}
+
 	logger.Info("Filesystem mounted at %s (read/write)", *mountPoint)
 	logger.Info("Press Ctrl+C to unmount and exit")
 
@@ -148,6 +178,104 @@ func cmdMount() {
 	fruitFS.StopHealthCheck()
 	server.Unmount()
 	logger.Info("Done")
+}
+
+func cmdLogin(args []string) {
+	fs := flag.NewFlagSet("login", flag.ExitOnError)
+	serverURL := fs.String("server", "http://localhost:8080", "Server URL")
+	useOIDC := fs.Bool("oidc", false, "Use OIDC device code flow")
+	deviceName := fs.String("device", "", "Device name (default: hostname)")
+	fs.Parse(args)
+
+	if *deviceName == "" {
+		name, _ := os.Hostname()
+		*deviceName = name
+	}
+
+	cfg := client.Config{
+		BaseURL: strings.TrimSuffix(*serverURL, "/"),
+		Timeout: 30 * time.Second,
+	}
+	c := client.New(cfg)
+	ctx := context.Background()
+
+	if *useOIDC {
+		resp, err := c.DeviceCodeAuth(ctx, *deviceName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		tf := &client.TokenFile{
+			Token:     resp.Token,
+			ExpiresAt: resp.ExpiresAt,
+			Server:    *serverURL,
+			Username:  resp.User.Username,
+		}
+		if err := client.SaveToken(tf); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save token: %v\n", err)
+		}
+		fmt.Printf("Login successful! Token saved to %s\n", client.TokenFilePath())
+		return
+	}
+
+	// Interactive username/password login
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Username: ")
+	username, _ := reader.ReadString('\n')
+	username = strings.TrimSpace(username)
+
+	fmt.Print("Password: ")
+	passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+	fmt.Println()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+		os.Exit(1)
+	}
+	password := string(passwordBytes)
+
+	resp, err := c.Login(ctx, username, password, *deviceName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	tf := &client.TokenFile{
+		Token:     resp.Token,
+		ExpiresAt: resp.ExpiresAt,
+		Server:    *serverURL,
+		Username:  resp.User.Username,
+	}
+	if err := client.SaveToken(tf); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save token: %v\n", err)
+	}
+	fmt.Printf("Login successful! Logged in as %s. Token saved to %s\n", resp.User.Username, client.TokenFilePath())
+}
+
+func cmdLogout(args []string) {
+	fs := flag.NewFlagSet("logout", flag.ExitOnError)
+	fs.Parse(args)
+
+	tf, err := client.LoadToken()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "No saved token found.\n")
+		os.Exit(1)
+	}
+
+	cfg := client.Config{
+		BaseURL:   strings.TrimSuffix(tf.Server, "/"),
+		Timeout:   10 * time.Second,
+		AuthToken: tf.Token,
+	}
+	c := client.New(cfg)
+
+	if err := c.Logout(context.Background()); err != nil {
+		logger.Debug("Server logout failed (token may already be expired): %v", err)
+	}
+
+	if err := client.DeleteToken(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to delete token file: %v\n", err)
+	}
+	fmt.Println("Logged out successfully.")
 }
 
 func openCache(args []string) (*cache.Cache, *flag.FlagSet) {

@@ -263,7 +263,7 @@ func (c *ClientCore) FetchContentRange(ctx context.Context, fileID string, offse
 }
 
 // UploadFile uploads a local file to the server.
-func (c *ClientCore) UploadFile(ctx context.Context, serverPath, localPath string) (*client.UploadResponse, error) {
+func (c *ClientCore) UploadFile(ctx context.Context, serverPath, localPath string, expectedVersion int) (*client.UploadResponse, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return nil, fmt.Errorf("open local file: %w", err)
@@ -278,7 +278,7 @@ func (c *ClientCore) UploadFile(ctx context.Context, serverPath, localPath strin
 	// Use SectionReader so HTTP client doesn't close our file
 	reader := io.NewSectionReader(f, 0, info.Size())
 
-	resp, err := c.Client.UploadFile(ctx, serverPath, reader, info.Size())
+	resp, err := c.Client.UploadFile(ctx, serverPath, reader, info.Size(), expectedVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -288,8 +288,8 @@ func (c *ClientCore) UploadFile(ctx context.Context, serverPath, localPath strin
 }
 
 // UploadReader uploads content from a reader to the server.
-func (c *ClientCore) UploadReader(ctx context.Context, serverPath string, r io.Reader, size int64) (*client.UploadResponse, error) {
-	resp, err := c.Client.UploadFile(ctx, serverPath, r, size)
+func (c *ClientCore) UploadReader(ctx context.Context, serverPath string, r io.Reader, size int64, expectedVersion int) (*client.UploadResponse, error) {
+	resp, err := c.Client.UploadFile(ctx, serverPath, r, size, expectedVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -336,13 +336,16 @@ func (c *ClientCore) RemoveMetadataChild(parentPath, childName string) {
 }
 
 // UpdateMetadataNode updates a node's metadata in the tree.
-func (c *ClientCore) UpdateMetadataNode(path string, size int64, hash string, modTime time.Time) {
+func (c *ClientCore) UpdateMetadataNode(path string, size int64, hash string, modTime time.Time, version int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if node := tree.FindByPath(c.metadata, path); node != nil {
 		node.Size = size
 		node.Hash = hash
 		node.ModTime = modTime
+		if version > 0 {
+			node.Version = version
+		}
 	}
 }
 

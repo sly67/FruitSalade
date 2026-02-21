@@ -9,6 +9,7 @@ import (
 	"hash"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -334,6 +335,11 @@ func (f *FruitFS) GetStats() *Stats {
 // IsOnline returns true if the server is reachable.
 func (f *FruitFS) IsOnline() bool {
 	return f.client.IsOnline()
+}
+
+// Client returns the underlying HTTP client.
+func (f *FruitFS) Client() *client.Client {
+	return f.client
 }
 
 // resolveMetadata returns the current metadata for this node by walking
@@ -1098,7 +1104,7 @@ func (n *FruitNode) Rename(ctx context.Context, name string, newParent fs.InodeE
 		defer content.Close()
 
 		serverNewPath := strings.TrimPrefix(newPath, "/")
-		if _, err := n.fsys.client.UploadFile(ctx, serverNewPath, content, size); err != nil {
+		if _, err := n.fsys.client.UploadFile(ctx, serverNewPath, content, size, 0); err != nil {
 			logger.Error("Rename upload failed: %v", err)
 			return syscall.EIO
 		}
@@ -1168,8 +1174,25 @@ func (fh *FileHandle) Flush(ctx context.Context) syscall.Errno {
 	reader := io.NewSectionReader(fh.tmpFile, 0, fh.size)
 
 	path := strings.TrimPrefix(fh.node.metadata.Path, "/")
-	resp, err := fh.node.fsys.client.UploadFile(ctx, path, reader, fh.size)
+	resp, err := fh.node.fsys.client.UploadFile(ctx, path, reader, fh.size, fh.node.metadata.Version)
 	if err != nil {
+		// Handle conflict: save local content as conflict copy, refresh metadata
+		if ce, ok := client.AsConflict(err); ok {
+			logger.Info("Conflict detected on %s (expected v%d, server v%d), saving conflict copy",
+				fh.node.metadata.Path, ce.ExpectedVersion, ce.CurrentVersion)
+
+			conflictPath := strings.TrimPrefix(conflictCopyPath(fh.node.metadata.Path), "/")
+			conflictReader := io.NewSectionReader(fh.tmpFile, 0, fh.size)
+			if _, cerr := fh.node.fsys.client.UploadFile(ctx, conflictPath, conflictReader, fh.size, 0); cerr != nil {
+				logger.Error("Failed to upload conflict copy: %v", cerr)
+			}
+
+			// Refresh metadata to get server's latest
+			fh.node.fsys.RefreshMetadata(ctx)
+			fh.dirty = false
+			return 0
+		}
+
 		logger.Error("Upload failed for %s: %v", fh.node.metadata.Path, err)
 		return syscall.EIO
 	}
@@ -1178,6 +1201,7 @@ func (fh *FileHandle) Flush(ctx context.Context) syscall.Errno {
 	fh.node.fsys.mu.Lock()
 	fh.node.metadata.Size = resp.Size
 	fh.node.metadata.Hash = resp.Hash
+	fh.node.metadata.Version = resp.Version
 	fh.node.metadata.ModTime = time.Now()
 	fh.node.fsys.mu.Unlock()
 
@@ -1191,7 +1215,7 @@ func (fh *FileHandle) Flush(ctx context.Context) syscall.Errno {
 
 	fh.dirty = false
 	fh.node.fsys.stats.BytesUploaded.Add(fh.size)
-	logger.Info("Uploaded: %s (%d bytes)", fh.node.metadata.Path, fh.size)
+	logger.Info("Uploaded: %s (%d bytes, v%d)", fh.node.metadata.Path, fh.size, resp.Version)
 
 	return 0
 }
@@ -1220,6 +1244,15 @@ func (n *FruitNode) removeChildLocked(name string) {
 			return
 		}
 	}
+}
+
+// conflictCopyPath generates a conflict copy path like "/dir/file (conflict 2026-02-20).ext".
+func conflictCopyPath(path string) string {
+	dir := filepath.Dir(path)
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(filepath.Base(path), ext)
+	stamp := time.Now().Format("2006-01-02")
+	return filepath.Join(dir, fmt.Sprintf("%s (conflict %s)%s", base, stamp, ext))
 }
 
 func buildChildPath(parentPath, name string) string {

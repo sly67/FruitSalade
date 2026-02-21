@@ -17,7 +17,7 @@ require (
 	github.com/winfsp/cgofuse v1.6.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.47.0
-	golang.org/x/sys v0.40.0
+	golang.org/x/sys v0.41.0
 )
 
 require (
@@ -51,6 +51,7 @@ require (
 	golang.org/x/image v0.0.0-20191009234506-e7c1f5e7dbb8 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.28.0 // indirect
+	golang.org/x/term v0.40.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )
 

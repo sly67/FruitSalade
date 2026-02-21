@@ -318,6 +318,12 @@ function handleDiff(filePath, version) {
 
 // ─── Conflicts Tab ──────────────────────────────────────────────────────────
 
+// Module-scoped state for the conflict compare overlay
+var _ccOverlay = null;
+var _ccConflicts = [];
+var _ccIndex = 0;
+var _ccKeyHandler = null;
+
 function renderConflictsTab() {
     var container = document.getElementById('fm-tab-content');
     container.innerHTML = '<div class="fm-conflicts-loading">Scanning for conflicts...</div>';
@@ -332,6 +338,7 @@ function renderConflictsTab() {
                 '</div>';
             return;
         }
+        _ccConflicts = conflicts;
         renderConflictList(container, conflicts);
     }).catch(function() {
         container.innerHTML = '<div class="alert alert-error" style="margin:1.5rem">Failed to load file tree</div>';
@@ -391,18 +398,275 @@ function findConflictFiles(tree) {
     return conflicts;
 }
 
-function renderConflictList(container, conflicts) {
-    var html = '<div class="fm-conflicts-header">' +
-        '<span class="badge badge-orange">' + conflicts.length + ' conflict' +
-        (conflicts.length !== 1 ? 's' : '') + '</span></div>';
+// ─── Resolution Functions (Promise-returning) ───────────────────────────────
 
-    html += '<div class="fm-conflict-cards">';
+function resolveKeepOriginal(c) {
+    var conflictApiPath = c.conflictFile.path.replace(/^\//, '');
+    return API.del('/api/v1/tree/' + API.encodeURIPath(conflictApiPath))
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('Delete failed');
+        });
+}
+
+function resolveKeepConflict(c) {
+    var conflictApiPath = c.conflictFile.path.replace(/^\//, '');
+    var originalApiPath = c.originalPath.replace(/^\//, '');
+
+    return API.request('GET', '/api/v1/content/' + API.encodeURIPath(conflictApiPath))
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('Failed to download conflict file');
+            return resp.blob();
+        })
+        .then(function(blob) {
+            return API.request('POST', '/api/v1/content/' + API.encodeURIPath(originalApiPath), undefined, blob);
+        })
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('Failed to upload to original path');
+            return API.del('/api/v1/tree/' + API.encodeURIPath(conflictApiPath));
+        })
+        .then(function(resp) {
+            if (!resp.ok) throw new Error('Failed to delete conflict copy');
+        });
+}
+
+function handleKeepOriginal(c) {
+    if (!confirm('Delete the conflict copy?\n\n' + c.conflictFile.path)) return;
+    resolveKeepOriginal(c).then(function() {
+        Toast.success('Conflict resolved: kept original');
+        renderConflictsTab();
+    }).catch(function() {
+        Toast.error('Failed to delete conflict copy');
+    });
+}
+
+function handleKeepConflict(c) {
+    var msg = c.originalFile
+        ? 'Replace the original with the conflict copy?\n\nOriginal: ' + c.originalPath + '\nConflict: ' + c.conflictFile.path
+        : 'Rename conflict copy to original path?\n\n' + c.conflictFile.path + ' -> ' + c.originalPath;
+    if (!confirm(msg)) return;
+    resolveKeepConflict(c).then(function() {
+        Toast.success('Conflict resolved: kept conflict copy');
+        renderConflictsTab();
+    }).catch(function(err) {
+        Toast.error('Failed to resolve conflict: ' + err.message);
+    });
+}
+
+// ─── Folder Grouping ────────────────────────────────────────────────────────
+
+function groupConflictsByFolder(conflicts) {
+    var groups = {};
     for (var i = 0; i < conflicts.length; i++) {
         var c = conflicts[i];
+        var dir = c.conflictFile.path.substring(0, c.conflictFile.path.lastIndexOf('/')) || '/';
+        if (!groups[dir]) groups[dir] = [];
+        groups[dir].push(c);
+    }
+    var folders = Object.keys(groups).sort();
+    return { groups: groups, folders: folders };
+}
+
+// ─── Batch Resolution ───────────────────────────────────────────────────────
+
+function batchResolve(items, resolveFn, label) {
+    if (!confirm('Resolve ' + items.length + ' conflict(s) by keeping ' + label + '?')) return;
+    var chain = Promise.resolve();
+    for (var i = 0; i < items.length; i++) {
+        (function(c) {
+            chain = chain.then(function() { return resolveFn(c); });
+        })(items[i]);
+    }
+    chain.then(function() {
+        Toast.success(items.length + ' conflict(s) resolved');
+        renderConflictsTab();
+    }).catch(function(err) {
+        Toast.error('Batch resolve failed: ' + err.message);
+        renderConflictsTab();
+    });
+}
+
+// ─── View Mode ──────────────────────────────────────────────────────────────
+
+function getConflictViewMode() {
+    return localStorage.getItem('conflict-view-mode') || 'cards';
+}
+
+function setConflictViewMode(mode) {
+    localStorage.setItem('conflict-view-mode', mode);
+}
+
+// ─── Conflict List Rendering ────────────────────────────────────────────────
+
+function renderConflictList(container, conflicts) {
+    var mode = getConflictViewMode();
+    var grouped = groupConflictsByFolder(conflicts);
+
+    // Build a flat array in grouped (folder-alphabetical) order
+    // so data-idx matches the array used for overlay navigation
+    var flatConflicts = [];
+    for (var fi = 0; fi < grouped.folders.length; fi++) {
+        var items = grouped.groups[grouped.folders[fi]];
+        for (var ci = 0; ci < items.length; ci++) {
+            items[ci]._flatIdx = flatConflicts.length;
+            flatConflicts.push(items[ci]);
+        }
+    }
+
+    var html = '<div class="fm-conflicts-toolbar">' +
+        '<span class="badge badge-orange">' + conflicts.length + ' conflict' +
+        (conflicts.length !== 1 ? 's' : '') + '</span>' +
+        '<div class="gallery-view-toggles">' +
+            '<button class="gallery-view-btn' + (mode === 'list' ? ' active' : '') + '" data-mode="list" title="List">&#9776;</button>' +
+            '<button class="gallery-view-btn' + (mode === 'cards' ? ' active' : '') + '" data-mode="cards" title="Cards">&#9638;</button>' +
+            '<button class="gallery-view-btn' + (mode === 'detailed' ? ' active' : '') + '" data-mode="detailed" title="Detailed">&#9641;</button>' +
+        '</div>' +
+    '</div>';
+
+    html += '<div id="fm-conflict-body"></div>';
+    container.innerHTML = html;
+
+    // Wire view toggle
+    container.querySelectorAll('.gallery-view-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            container.querySelectorAll('.gallery-view-btn').forEach(function(b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            var newMode = btn.getAttribute('data-mode');
+            setConflictViewMode(newMode);
+            renderConflictBody(grouped, flatConflicts, newMode);
+        });
+    });
+
+    renderConflictBody(grouped, flatConflicts, mode);
+}
+
+function renderConflictBody(grouped, allConflicts, mode) {
+    var body = document.getElementById('fm-conflict-body');
+    var html = '';
+
+    for (var fi = 0; fi < grouped.folders.length; fi++) {
+        var folder = grouped.folders[fi];
+        var items = grouped.groups[folder];
+
+        // Folder header
+        html += '<div class="fm-conflict-folder" data-folder="' + esc(folder) + '">' +
+            '<div class="fm-conflict-folder-header">' +
+                '<button class="fm-conflict-folder-toggle" title="Toggle folder">&#9660;</button>' +
+                '<span class="fm-conflict-folder-path">' + esc(folder) + '</span>' +
+                '<span class="badge badge-orange" style="margin-left:0.5rem">' + items.length + '</span>' +
+                '<div class="fm-conflict-folder-actions">' +
+                    '<button class="btn btn-sm btn-outline" data-batch="keep-original" data-folder="' + esc(folder) + '">Keep All Originals</button>' +
+                    '<button class="btn btn-sm btn-outline" data-batch="keep-conflict" data-folder="' + esc(folder) + '">Keep All Conflicts</button>' +
+                '</div>' +
+            '</div>' +
+            '<div class="fm-conflict-folder-body">';
+
+        if (mode === 'list') {
+            html += renderConflictListMode(items);
+        } else if (mode === 'detailed') {
+            html += renderConflictDetailedMode(items);
+        } else {
+            html += renderConflictCardsMode(items);
+        }
+
+        html += '</div></div>';
+    }
+
+    body.innerHTML = html;
+
+    // Wire folder toggles
+    body.querySelectorAll('.fm-conflict-folder-toggle').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var folder = btn.closest('.fm-conflict-folder');
+            folder.classList.toggle('collapsed');
+        });
+    });
+
+    // Wire batch actions
+    body.querySelectorAll('[data-batch]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var action = btn.getAttribute('data-batch');
+            var folderPath = btn.getAttribute('data-folder');
+            var items = grouped.groups[folderPath];
+            if (action === 'keep-original') {
+                var origItems = items.filter(function(c) { return c.originalFile; });
+                if (origItems.length === 0) {
+                    Toast.error('No conflicts with originals to keep');
+                    return;
+                }
+                batchResolve(origItems, resolveKeepOriginal, 'originals');
+            } else {
+                batchResolve(items, resolveKeepConflict, 'conflict copies');
+            }
+        });
+    });
+
+    // Wire item actions
+    body.querySelectorAll('[data-action]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var action = btn.getAttribute('data-action');
+            var idx = parseInt(btn.getAttribute('data-idx'), 10);
+            var c = allConflicts[idx];
+            switch (action) {
+                case 'compare':
+                    openConflictOverlay(allConflicts, idx);
+                    break;
+                case 'keep-original':
+                    handleKeepOriginal(c);
+                    break;
+                case 'keep-conflict':
+                    handleKeepConflict(c);
+                    break;
+            }
+        });
+    });
+}
+
+// ─── List Mode ──────────────────────────────────────────────────────────────
+
+function renderConflictListMode(items) {
+    var html = '<table class="fm-conflict-list responsive-table"><thead><tr>' +
+        '<th></th><th>File</th><th>Folder</th><th>Date</th><th>Sizes</th><th></th>' +
+        '</tr></thead><tbody>';
+
+    for (var i = 0; i < items.length; i++) {
+        var c = items[i];
+        var cf = c.conflictFile;
+        var of_ = c.originalFile;
+        var dir = cf.path.substring(0, cf.path.lastIndexOf('/'));
+        var origName = c.originalPath.split('/').pop();
+        var sizes = (of_ ? formatBytes(of_.size) : '?') + ' / ' + formatBytes(cf.size);
+
+        html += '<tr>' +
+            '<td data-label="">' + FileTypes.icon(origName, false) + '</td>' +
+            '<td data-label="File"><span class="fm-conflict-name-compact">' + esc(origName) + '</span></td>' +
+            '<td data-label="Folder"><code class="fm-conflict-path-compact">' + esc(dir) + '</code></td>' +
+            '<td data-label="Date">' + esc(c.conflictDate) + '</td>' +
+            '<td data-label="Sizes">' + sizes + '</td>' +
+            '<td data-label="" class="fm-conflict-row-actions">';
+        if (of_) {
+            html += '<button class="btn btn-sm btn-outline" data-action="compare" data-idx="' + c._flatIdx + '">Compare</button>';
+        }
+        if (of_) {
+            html += '<button class="btn btn-sm btn-outline" data-action="keep-original" data-idx="' + c._flatIdx + '">Keep Orig</button>';
+        }
+        html += '<button class="btn btn-sm" data-action="keep-conflict" data-idx="' + c._flatIdx + '">Keep Conflict</button>';
+        html += '</td></tr>';
+    }
+
+    html += '</tbody></table>';
+    return html;
+}
+
+// ─── Cards Mode ─────────────────────────────────────────────────────────────
+
+function renderConflictCardsMode(items) {
+    var html = '<div class="fm-conflict-cards">';
+    for (var i = 0; i < items.length; i++) {
+        var c = items[i];
         var cf = c.conflictFile;
         var of_ = c.originalFile;
 
-        html += '<div class="fm-conflict-card" data-index="' + i + '">' +
+        html += '<div class="fm-conflict-card">' +
             '<div class="fm-conflict-card-header">' +
                 '<span class="fm-conflict-icon">&#9888;</span>' +
                 '<div class="fm-conflict-info">' +
@@ -424,60 +688,430 @@ function renderConflictList(container, conflicts) {
                 '</div>' +
             '</div>' +
             '<div class="fm-conflict-actions">';
-
-        if (of_ && FileTypes.isText(cf.name)) {
-            html += '<button class="btn btn-sm btn-outline" data-action="diff" data-idx="' + i + '">Compare</button>';
-        }
-        html += '<button class="btn btn-sm btn-outline" data-action="preview-conflict" data-idx="' + i + '">Preview Conflict</button>';
         if (of_) {
-            html += '<button class="btn btn-sm btn-outline" data-action="keep-original" data-idx="' + i + '">Keep Original</button>';
+            html += '<button class="btn btn-sm btn-outline" data-action="compare" data-idx="' + c._flatIdx + '">Compare</button>';
         }
-        html += '<button class="btn btn-sm" data-action="keep-conflict" data-idx="' + i + '">Keep Conflict</button>';
-
-        html += '</div>' +
-            '<div class="fm-conflict-diff-area" id="conflict-diff-' + i + '"></div>' +
-            '</div>';
+        if (of_) {
+            html += '<button class="btn btn-sm btn-outline" data-action="keep-original" data-idx="' + c._flatIdx + '">Keep Original</button>';
+        }
+        html += '<button class="btn btn-sm" data-action="keep-conflict" data-idx="' + c._flatIdx + '">Keep Conflict</button>';
+        html += '</div></div>';
     }
     html += '</div>';
-    container.innerHTML = html;
+    return html;
+}
 
-    // Wire actions
-    container.querySelectorAll('[data-action]').forEach(function(btn) {
-        btn.addEventListener('click', function() {
-            var action = btn.getAttribute('data-action');
-            var idx = parseInt(btn.getAttribute('data-idx'), 10);
-            var c = conflicts[idx];
+// ─── Detailed Mode ──────────────────────────────────────────────────────────
 
-            switch (action) {
-                case 'diff':
-                    handleConflictDiff(c, idx);
-                    break;
-                case 'preview-conflict':
-                    handleConflictPreview(c, idx);
-                    break;
-                case 'keep-original':
-                    handleKeepOriginal(c, container, conflicts);
-                    break;
-                case 'keep-conflict':
-                    handleKeepConflict(c, container, conflicts);
-                    break;
+function renderConflictDetailedMode(items) {
+    var html = '<div class="fm-conflict-cards">';
+    for (var i = 0; i < items.length; i++) {
+        var c = items[i];
+        var cf = c.conflictFile;
+        var of_ = c.originalFile;
+        var ftype = conflictFileType(cf.name);
+
+        html += '<div class="fm-conflict-card fm-conflict-card-detailed">' +
+            '<div class="fm-conflict-card-header">' +
+                '<span class="fm-conflict-icon">&#9888;</span>' +
+                '<div class="fm-conflict-info">' +
+                    '<div class="fm-conflict-name">' + esc(cf.name) + '</div>' +
+                    '<div class="fm-conflict-path"><code>' + esc(cf.path) + '</code></div>' +
+                    '<div class="fm-conflict-date">Conflict from ' + esc(c.conflictDate) + '</div>' +
+                '</div>' +
+            '</div>';
+
+        // Thumbnails for images/videos
+        if (ftype === 'image' && of_) {
+            var origSrc = API.downloadUrl(of_.path.replace(/^\//, ''));
+            var confSrc = API.downloadUrl(cf.path.replace(/^\//, ''));
+            html += '<div class="fm-conflict-thumbs">' +
+                '<div class="fm-conflict-thumb">' +
+                    '<div class="fm-conflict-thumb-label">Original</div>' +
+                    '<img src="' + esc(origSrc) + '" loading="lazy">' +
+                '</div>' +
+                '<div class="fm-conflict-thumb">' +
+                    '<div class="fm-conflict-thumb-label">Conflict</div>' +
+                    '<img src="' + esc(confSrc) + '" loading="lazy">' +
+                '</div>' +
+            '</div>';
+        } else {
+            // Extended metadata for non-image files
+            html += '<div class="fm-conflict-comparison">' +
+                '<div class="fm-conflict-side">' +
+                    '<strong>Original</strong>';
+            if (of_) {
+                html += '<div>' + formatBytes(of_.size) + '</div>' +
+                    '<div class="props-muted">' + formatDate(of_.mtime) + '</div>' +
+                    (of_.hash ? '<div class="props-muted"><code>' + esc(of_.hash.substring(0, 16)) + '</code></div>' : '');
+            } else {
+                html += '<div class="props-muted">Not found</div>';
             }
+            html += '</div><div class="fm-conflict-vs">vs</div>' +
+                '<div class="fm-conflict-side">' +
+                    '<strong>Conflict Copy</strong>' +
+                    '<div>' + formatBytes(cf.size) + '</div>' +
+                    '<div class="props-muted">' + formatDate(cf.mtime) + '</div>' +
+                    (cf.hash ? '<div class="props-muted"><code>' + esc(cf.hash.substring(0, 16)) + '</code></div>' : '') +
+                '</div></div>';
+        }
+
+        html += '<div class="fm-conflict-actions">';
+        if (of_) {
+            html += '<button class="btn btn-sm btn-outline" data-action="compare" data-idx="' + c._flatIdx + '">Compare</button>';
+        }
+        if (of_) {
+            html += '<button class="btn btn-sm btn-outline" data-action="keep-original" data-idx="' + c._flatIdx + '">Keep Original</button>';
+        }
+        html += '<button class="btn btn-sm" data-action="keep-conflict" data-idx="' + c._flatIdx + '">Keep Conflict</button>';
+        html += '</div></div>';
+    }
+    html += '</div>';
+    return html;
+}
+
+// ─── Conflict File Type Detection ───────────────────────────────────────────
+
+function conflictFileType(name) {
+    var type = FileTypes.detect(name);
+    if (type === 'image') return 'image';
+    if (type === 'text') return 'text';
+    if (type === 'pdf') return 'pdf';
+    var ext = FileTypes.getExt(name);
+    if (['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv'].indexOf(ext) !== -1) return 'video';
+    if (['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma'].indexOf(ext) !== -1) return 'audio';
+    return 'other';
+}
+
+// ─── Fullscreen Compare Overlay ─────────────────────────────────────────────
+
+function openConflictOverlay(conflicts, idx) {
+    _ccConflicts = conflicts;
+    _ccIndex = idx;
+
+    // Create overlay
+    var overlay = document.createElement('div');
+    overlay.className = 'conflict-compare-overlay';
+    overlay.innerHTML =
+        '<button class="lightbox-close cc-close" title="Close">&times;</button>' +
+        '<button class="lightbox-prev cc-prev" title="Previous conflict">&#10094;</button>' +
+        '<button class="lightbox-next cc-next" title="Next conflict">&#10095;</button>' +
+        '<div class="conflict-compare-body"></div>' +
+        '<div class="conflict-compare-toolbar"></div>';
+
+    document.body.appendChild(overlay);
+    _ccOverlay = overlay;
+
+    // Wire close
+    overlay.querySelector('.cc-close').addEventListener('click', closeConflictOverlay);
+
+    // Wire nav
+    overlay.querySelector('.cc-prev').addEventListener('click', function() {
+        if (_ccIndex > 0) {
+            _ccIndex--;
+            renderOverlayContent();
+        }
+    });
+    overlay.querySelector('.cc-next').addEventListener('click', function() {
+        if (_ccIndex < _ccConflicts.length - 1) {
+            _ccIndex++;
+            renderOverlayContent();
+        }
+    });
+
+    // Keyboard
+    _ccKeyHandler = function(e) {
+        if (e.key === 'Escape') closeConflictOverlay();
+        else if (e.key === 'ArrowLeft' && _ccIndex > 0) { _ccIndex--; renderOverlayContent(); }
+        else if (e.key === 'ArrowRight' && _ccIndex < _ccConflicts.length - 1) { _ccIndex++; renderOverlayContent(); }
+    };
+    document.addEventListener('keydown', _ccKeyHandler);
+
+    renderOverlayContent();
+}
+
+function closeConflictOverlay() {
+    if (_ccOverlay) {
+        _ccOverlay.remove();
+        _ccOverlay = null;
+    }
+    if (_ccKeyHandler) {
+        document.removeEventListener('keydown', _ccKeyHandler);
+        _ccKeyHandler = null;
+    }
+}
+
+function renderOverlayContent() {
+    if (!_ccOverlay) return;
+    var c = _ccConflicts[_ccIndex];
+    var body = _ccOverlay.querySelector('.conflict-compare-body');
+    var toolbar = _ccOverlay.querySelector('.conflict-compare-toolbar');
+    var ftype = conflictFileType(c.conflictFile.name);
+
+    // Update nav arrow visibility
+    _ccOverlay.querySelector('.cc-prev').style.display = _ccIndex > 0 ? '' : 'none';
+    _ccOverlay.querySelector('.cc-next').style.display = _ccIndex < _ccConflicts.length - 1 ? '' : 'none';
+
+    // Toolbar
+    var origName = c.originalPath.split('/').pop();
+    var toolbarHtml = '<div class="cc-toolbar-left">';
+
+    if (ftype === 'image') {
+        toolbarHtml += '<button class="btn btn-sm btn-outline cc-mode-btn active" data-ccmode="side">Side by Side</button>' +
+            '<button class="btn btn-sm btn-outline cc-mode-btn" data-ccmode="slider">Slider</button>';
+    }
+    if (ftype === 'video') {
+        toolbarHtml += '<label class="cc-sync-label"><input type="checkbox" class="cc-sync-check"> Sync Playback</label>';
+    }
+
+    toolbarHtml += '</div><div class="cc-toolbar-center">' +
+        '<span class="cc-filename">' + esc(origName) + '</span>' +
+    '</div><div class="cc-toolbar-right">';
+
+    if (c.originalFile) {
+        toolbarHtml += '<button class="btn btn-sm btn-outline conflict-resolve-btn" data-resolve="keep-original">Keep Original</button>';
+    }
+    toolbarHtml += '<button class="btn btn-sm conflict-resolve-btn" data-resolve="keep-conflict">Keep Conflict</button>' +
+        '<span class="cc-counter">' + (_ccIndex + 1) + ' / ' + _ccConflicts.length + '</span>' +
+    '</div>';
+
+    toolbar.innerHTML = toolbarHtml;
+
+    // Wire resolve buttons
+    toolbar.querySelectorAll('.conflict-resolve-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var action = btn.getAttribute('data-resolve');
+            resolveFromOverlay(action);
+        });
+    });
+
+    // Render body based on type
+    if (ftype === 'image') {
+        renderOverlayImage(c, body, 'side');
+        // Wire mode toggles
+        toolbar.querySelectorAll('.cc-mode-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                toolbar.querySelectorAll('.cc-mode-btn').forEach(function(b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                renderOverlayImage(c, body, btn.getAttribute('data-ccmode'));
+            });
+        });
+    } else if (ftype === 'video') {
+        renderOverlayVideo(c, body, toolbar);
+    } else if (ftype === 'audio') {
+        renderOverlayAudio(c, body);
+    } else if (ftype === 'text') {
+        renderOverlayText(c, body);
+    } else if (ftype === 'pdf') {
+        renderOverlayPdf(c, body);
+    } else {
+        renderOverlayBinary(c, body);
+    }
+}
+
+// ─── Overlay Image: Side by Side ────────────────────────────────────────────
+
+function renderOverlayImage(c, body, mode) {
+    var origSrc = API.downloadUrl(c.originalFile.path.replace(/^\//, ''));
+    var confSrc = API.downloadUrl(c.conflictFile.path.replace(/^\//, ''));
+
+    if (mode === 'slider') {
+        renderOverlaySlider(body, origSrc, confSrc);
+    } else {
+        body.innerHTML =
+            '<div class="cc-image-side-by-side">' +
+                '<div class="cc-image-panel">' +
+                    '<div class="cc-image-label">Original</div>' +
+                    '<img src="' + esc(origSrc) + '">' +
+                '</div>' +
+                '<div class="cc-image-panel">' +
+                    '<div class="cc-image-label">Conflict Copy</div>' +
+                    '<img src="' + esc(confSrc) + '">' +
+                '</div>' +
+            '</div>';
+    }
+}
+
+// ─── Overlay Slider (proper drag handle) ────────────────────────────────────
+
+function renderOverlaySlider(body, origSrc, confSrc) {
+    body.innerHTML =
+        '<div class="cc-slider-container">' +
+            '<img class="cc-slider-img cc-slider-img-orig" src="' + esc(origSrc) + '">' +
+            '<div class="cc-slider-clip">' +
+                '<img class="cc-slider-img cc-slider-img-conf" src="' + esc(confSrc) + '">' +
+            '</div>' +
+            '<div class="cc-slider-handle">' +
+                '<div class="cc-slider-handle-line"></div>' +
+                '<div class="cc-slider-handle-grip">&#8596;</div>' +
+            '</div>' +
+            '<div class="cc-slider-labels">' +
+                '<span class="cc-slider-label-left">Original</span>' +
+                '<span class="cc-slider-label-right">Conflict Copy</span>' +
+            '</div>' +
+        '</div>';
+
+    var container = body.querySelector('.cc-slider-container');
+    var clip = body.querySelector('.cc-slider-clip');
+    var handle = body.querySelector('.cc-slider-handle');
+    var confImg = body.querySelector('.cc-slider-img-conf');
+    var origImg = body.querySelector('.cc-slider-img-orig');
+    var dragging = false;
+
+    function setPosition(pct) {
+        pct = Math.max(0, Math.min(100, pct));
+        clip.style.width = pct + '%';
+        handle.style.left = pct + '%';
+    }
+
+    function getPct(e) {
+        var rect = container.getBoundingClientRect();
+        var x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        return (x / rect.width) * 100;
+    }
+
+    // Initialize at 50%
+    setPosition(50);
+
+    // Set conflict image width to match container on load
+    function syncImgWidth() {
+        confImg.style.width = container.offsetWidth + 'px';
+    }
+    origImg.addEventListener('load', syncImgWidth);
+    if (origImg.complete) syncImgWidth();
+
+    // Mouse drag
+    handle.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        dragging = true;
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!dragging) return;
+        setPosition(getPct(e));
+    });
+    document.addEventListener('mouseup', function() {
+        dragging = false;
+    });
+
+    // Touch drag
+    handle.addEventListener('touchstart', function(e) {
+        e.preventDefault();
+        dragging = true;
+    });
+    document.addEventListener('touchmove', function(e) {
+        if (!dragging) return;
+        setPosition(getPct(e));
+    });
+    document.addEventListener('touchend', function() {
+        dragging = false;
+    });
+
+    // Click anywhere on container to jump
+    container.addEventListener('click', function(e) {
+        if (e.target.closest('.cc-slider-handle')) return;
+        setPosition(getPct(e));
+    });
+
+    // Resize handler
+    var resizeHandler = function() {
+        syncImgWidth();
+    };
+    window.addEventListener('resize', resizeHandler);
+
+    // Store cleanup ref on the overlay
+    if (_ccOverlay) {
+        _ccOverlay._sliderCleanup = function() {
+            window.removeEventListener('resize', resizeHandler);
+        };
+    }
+}
+
+// ─── Overlay Video ──────────────────────────────────────────────────────────
+
+function renderOverlayVideo(c, body, toolbar) {
+    var origSrc = API.downloadUrl(c.originalFile.path.replace(/^\//, ''));
+    var confSrc = API.downloadUrl(c.conflictFile.path.replace(/^\//, ''));
+
+    body.innerHTML =
+        '<div class="cc-video-side-by-side">' +
+            '<div class="cc-video-panel">' +
+                '<div class="cc-image-label">Original</div>' +
+                '<video controls preload="metadata" src="' + esc(origSrc) + '"></video>' +
+            '</div>' +
+            '<div class="cc-video-panel">' +
+                '<div class="cc-image-label">Conflict Copy</div>' +
+                '<video controls preload="metadata" src="' + esc(confSrc) + '"></video>' +
+            '</div>' +
+        '</div>';
+
+    var videos = body.querySelectorAll('video');
+    var v1 = videos[0];
+    var v2 = videos[1];
+    var syncCheck = toolbar.querySelector('.cc-sync-check');
+    var syncing = false;
+
+    function syncHandler(src, dst) {
+        return function() {
+            if (!syncing || !syncCheck.checked) return;
+            syncing = false;
+            if (Math.abs(dst.currentTime - src.currentTime) > 0.3) {
+                dst.currentTime = src.currentTime;
+            }
+            if (src.paused && !dst.paused) dst.pause();
+            if (!src.paused && dst.paused) dst.play();
+            syncing = true;
+        };
+    }
+
+    if (syncCheck) {
+        syncCheck.addEventListener('change', function() {
+            syncing = syncCheck.checked;
+        });
+    }
+
+    ['play', 'pause', 'seeked'].forEach(function(evt) {
+        v1.addEventListener(evt, function() {
+            if (!syncing) return;
+            syncing = false;
+            if (evt === 'seeked' && Math.abs(v2.currentTime - v1.currentTime) > 0.3) v2.currentTime = v1.currentTime;
+            if (evt === 'play' && v2.paused) v2.play();
+            if (evt === 'pause' && !v2.paused) v2.pause();
+            syncing = true;
+        });
+        v2.addEventListener(evt, function() {
+            if (!syncing) return;
+            syncing = false;
+            if (evt === 'seeked' && Math.abs(v1.currentTime - v2.currentTime) > 0.3) v1.currentTime = v2.currentTime;
+            if (evt === 'play' && v1.paused) v1.play();
+            if (evt === 'pause' && !v1.paused) v1.pause();
+            syncing = true;
         });
     });
 }
 
-// ─── Conflict Actions ───────────────────────────────────────────────────────
+// ─── Overlay Audio ──────────────────────────────────────────────────────────
 
-function handleConflictDiff(c, idx) {
-    var area = document.getElementById('conflict-diff-' + idx);
-    area.innerHTML = '<div class="ver-diff-panel"><div class="ver-diff-header">' +
-        '<span>Comparing original with conflict copy</span>' +
-        '<button class="btn btn-sm btn-outline conflict-close-btn">Close</button>' +
-        '</div><div class="ver-diff-body"><p class="props-muted">Loading both files...</p></div></div>';
+function renderOverlayAudio(c, body) {
+    var origSrc = API.downloadUrl(c.originalFile.path.replace(/^\//, ''));
+    var confSrc = API.downloadUrl(c.conflictFile.path.replace(/^\//, ''));
 
-    area.querySelector('.conflict-close-btn').addEventListener('click', function() {
-        area.innerHTML = '';
-    });
+    body.innerHTML =
+        '<div class="cc-audio-side-by-side">' +
+            '<div class="cc-audio-panel">' +
+                '<div class="cc-image-label">Original</div>' +
+                '<audio controls preload="metadata" src="' + esc(origSrc) + '"></audio>' +
+            '</div>' +
+            '<div class="cc-audio-panel">' +
+                '<div class="cc-image-label">Conflict Copy</div>' +
+                '<audio controls preload="metadata" src="' + esc(confSrc) + '"></audio>' +
+            '</div>' +
+        '</div>';
+}
+
+// ─── Overlay Text Diff ──────────────────────────────────────────────────────
+
+function renderOverlayText(c, body) {
+    body.innerHTML = '<div class="cc-text-loading"><p class="props-muted">Loading both files...</p></div>';
 
     var originalUrl = '/api/v1/content/' + API.encodeURIPath(c.originalFile.path.replace(/^\//, ''));
     var conflictUrl = '/api/v1/content/' + API.encodeURIPath(c.conflictFile.path.replace(/^\//, ''));
@@ -486,98 +1120,128 @@ function handleConflictDiff(c, idx) {
         API.request('GET', originalUrl).then(function(r) { return r.text(); }),
         API.request('GET', conflictUrl).then(function(r) { return r.text(); })
     ]).then(function(results) {
-        var body = area.querySelector('.ver-diff-body');
-        if (!body) return;
-        body.innerHTML = computeDiff(results[0], results[1], 'Original');
+        body.innerHTML = '<div class="cc-text-diff">' + computeDiff(results[0], results[1], 'Original') + '</div>';
     }).catch(function() {
-        var body = area.querySelector('.ver-diff-body');
-        if (body) body.innerHTML = '<div class="alert alert-error">Failed to load file content</div>';
+        body.innerHTML = '<div class="cc-text-diff"><div class="alert alert-error">Failed to load file content</div></div>';
     });
 }
 
-function handleConflictPreview(c, idx) {
-    var area = document.getElementById('conflict-diff-' + idx);
-    area.innerHTML = '<div class="ver-diff-panel"><div class="ver-diff-header">' +
-        '<span>Preview: ' + esc(c.conflictFile.name) + '</span>' +
-        '<button class="btn btn-sm btn-outline conflict-close-btn">Close</button>' +
-        '</div><div class="ver-diff-body"><p class="props-muted">Loading...</p></div></div>';
+// ─── Overlay PDF ────────────────────────────────────────────────────────────
 
-    area.querySelector('.conflict-close-btn').addEventListener('click', function() {
-        area.innerHTML = '';
-    });
+function renderOverlayPdf(c, body) {
+    var origSrc = API.downloadUrl(c.originalFile.path.replace(/^\//, ''));
+    var confSrc = API.downloadUrl(c.conflictFile.path.replace(/^\//, ''));
 
-    var url = '/api/v1/content/' + API.encodeURIPath(c.conflictFile.path.replace(/^\//, ''));
+    body.innerHTML =
+        '<div class="cc-pdf-side-by-side">' +
+            '<div class="cc-pdf-panel">' +
+                '<div class="cc-image-label">Original</div>' +
+                '<embed src="' + esc(origSrc) + '" type="application/pdf">' +
+            '</div>' +
+            '<div class="cc-pdf-panel">' +
+                '<div class="cc-image-label">Conflict Copy</div>' +
+                '<embed src="' + esc(confSrc) + '" type="application/pdf">' +
+            '</div>' +
+        '</div>';
+}
 
-    if (FileTypes.isText(c.conflictFile.name)) {
-        API.request('GET', url).then(function(r) { return r.text(); }).then(function(text) {
-            var body = area.querySelector('.ver-diff-body');
-            if (body) body.innerHTML = '<pre class="ver-code">' + esc(text) + '</pre>';
-        }).catch(function() {
-            var body = area.querySelector('.ver-diff-body');
-            if (body) body.innerHTML = '<div class="alert alert-error">Failed to load file</div>';
-        });
-    } else {
-        var type = FileTypes.detect(c.conflictFile.name);
-        var body = area.querySelector('.ver-diff-body');
-        if (type === 'image') {
-            body.innerHTML = '<div style="padding:1rem;text-align:center"><img src="' +
-                esc(API.downloadUrl(c.conflictFile.path.replace(/^\//, ''))) +
-                '" style="max-width:100%;max-height:400px"></div>';
-        } else {
-            body.innerHTML = '<div style="padding:1rem;text-align:center">' +
-                '<a class="btn btn-sm" href="' + esc(API.downloadUrl(c.conflictFile.path.replace(/^\//, ''))) +
-                '" download>Download to preview</a></div>';
-        }
+// ─── Overlay Binary/Other ───────────────────────────────────────────────────
+
+function renderOverlayBinary(c, body) {
+    var of_ = c.originalFile;
+    var cf = c.conflictFile;
+
+    body.innerHTML =
+        '<div class="cc-binary-side-by-side">' +
+            '<div class="cc-binary-panel">' +
+                '<div class="cc-image-label">Original</div>' +
+                (of_ ? '<div class="cc-binary-meta">' +
+                    '<div>' + formatBytes(of_.size) + '</div>' +
+                    '<div class="props-muted">' + formatDate(of_.mtime) + '</div>' +
+                    '<a class="btn btn-sm btn-outline" href="' + esc(API.downloadUrl(of_.path.replace(/^\//, ''))) + '" download>Download</a>' +
+                '</div><div class="cc-hex-dump" id="cc-hex-orig">Loading hex...</div>'
+                : '<div class="props-muted">Not found</div>') +
+            '</div>' +
+            '<div class="cc-binary-panel">' +
+                '<div class="cc-image-label">Conflict Copy</div>' +
+                '<div class="cc-binary-meta">' +
+                    '<div>' + formatBytes(cf.size) + '</div>' +
+                    '<div class="props-muted">' + formatDate(cf.mtime) + '</div>' +
+                    '<a class="btn btn-sm btn-outline" href="' + esc(API.downloadUrl(cf.path.replace(/^\//, ''))) + '" download>Download</a>' +
+                '</div><div class="cc-hex-dump" id="cc-hex-conf">Loading hex...</div>' +
+            '</div>' +
+        '</div>';
+
+    // Fetch first 512 bytes of each file and render hex dumps
+    if (of_) {
+        fetchHexDump(of_.path, 'cc-hex-orig');
     }
+    fetchHexDump(cf.path, 'cc-hex-conf');
 }
 
-function handleKeepOriginal(c, container, conflicts) {
-    if (!confirm('Delete the conflict copy?\n\n' + c.conflictFile.path)) return;
-
-    var conflictApiPath = c.conflictFile.path.replace(/^\//, '');
-    API.del('/api/v1/tree/' + API.encodeURIPath(conflictApiPath))
-        .then(function(resp) {
-            if (!resp.ok) throw new Error('Delete failed');
-            Toast.success('Conflict resolved: kept original');
-            renderConflictsTab();
+function fetchHexDump(filePath, elementId) {
+    var url = '/api/v1/content/' + API.encodeURIPath(filePath.replace(/^\//, ''));
+    var headers = {};
+    var token = API.getToken();
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    headers['Range'] = 'bytes=0-511';
+    fetch(url, { method: 'GET', headers: headers })
+        .then(function(resp) { return resp.arrayBuffer(); })
+        .then(function(buf) {
+            var el = document.getElementById(elementId);
+            if (!el) return;
+            var bytes = new Uint8Array(buf);
+            if (bytes.length > 512) bytes = bytes.slice(0, 512);
+            el.innerHTML = '<pre>' + formatHex(bytes) + '</pre>';
         }).catch(function() {
-            Toast.error('Failed to delete conflict copy');
+            var el = document.getElementById(elementId);
+            if (el) el.innerHTML = '<span class="props-muted">Could not load preview</span>';
         });
 }
 
-function handleKeepConflict(c, container, conflicts) {
-    var msg = c.originalFile
-        ? 'Replace the original with the conflict copy?\n\nOriginal: ' + c.originalPath + '\nConflict: ' + c.conflictFile.path
-        : 'Rename conflict copy to original path?\n\n' + c.conflictFile.path + ' -> ' + c.originalPath;
+function formatHex(bytes) {
+    var lines = [];
+    for (var i = 0; i < bytes.length; i += 16) {
+        var offset = i.toString(16).padStart(8, '0');
+        var hexParts = [];
+        var ascii = '';
+        for (var j = 0; j < 16; j++) {
+            if (i + j < bytes.length) {
+                hexParts.push(bytes[i + j].toString(16).padStart(2, '0'));
+                var ch = bytes[i + j];
+                ascii += (ch >= 32 && ch <= 126) ? String.fromCharCode(ch) : '.';
+            } else {
+                hexParts.push('  ');
+                ascii += ' ';
+            }
+        }
+        var hex = hexParts.slice(0, 8).join(' ') + '  ' + hexParts.slice(8).join(' ');
+        lines.push(offset + '  ' + hex + '  |' + esc(ascii) + '|');
+    }
+    return lines.join('\n');
+}
 
-    if (!confirm(msg)) return;
+// ─── Resolve from Overlay ───────────────────────────────────────────────────
 
-    // Download conflict content, upload to original path, delete conflict
-    var conflictApiPath = c.conflictFile.path.replace(/^\//, '');
-    var originalApiPath = c.originalPath.replace(/^\//, '');
+function resolveFromOverlay(action) {
+    var c = _ccConflicts[_ccIndex];
+    var fn = action === 'keep-original' ? resolveKeepOriginal : resolveKeepConflict;
+    var label = action === 'keep-original' ? 'kept original' : 'kept conflict copy';
 
-    API.request('GET', '/api/v1/content/' + API.encodeURIPath(conflictApiPath))
-        .then(function(resp) {
-            if (!resp.ok) throw new Error('Failed to download conflict file');
-            return resp.blob();
-        })
-        .then(function(blob) {
-            // Upload conflict content to original path
-            return API.request('POST', '/api/v1/content/' + API.encodeURIPath(originalApiPath), undefined, blob);
-        })
-        .then(function(resp) {
-            if (!resp.ok) throw new Error('Failed to upload to original path');
-            // Delete the conflict copy
-            return API.del('/api/v1/tree/' + API.encodeURIPath(conflictApiPath));
-        })
-        .then(function(resp) {
-            if (!resp.ok) throw new Error('Failed to delete conflict copy');
-            Toast.success('Conflict resolved: kept conflict copy');
+    fn(c).then(function() {
+        Toast.success('Conflict resolved: ' + label);
+        // Remove from list
+        _ccConflicts.splice(_ccIndex, 1);
+        if (_ccConflicts.length === 0) {
+            closeConflictOverlay();
             renderConflictsTab();
-        })
-        .catch(function(err) {
-            Toast.error('Failed to resolve conflict: ' + err.message);
-        });
+            return;
+        }
+        if (_ccIndex >= _ccConflicts.length) _ccIndex = _ccConflicts.length - 1;
+        renderOverlayContent();
+    }).catch(function(err) {
+        Toast.error('Failed to resolve: ' + err.message);
+    });
 }
 
 // ─── Diff Utilities ─────────────────────────────────────────────────────────

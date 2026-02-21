@@ -1,0 +1,6 @@
+Hello from FruitSalade!
+This file was served from local storage, through PostgreSQL metadata, to your FUSE mount.
+If you can read this, the full pipeline is working correctly.
+
+This version was edited on the laptop while offline.
+Added: multi-backend storage support (S3, local, SMB).

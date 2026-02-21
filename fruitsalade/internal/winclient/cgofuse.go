@@ -2,13 +2,16 @@ package winclient
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/fruitsalade/fruitsalade/shared/pkg/client"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/logger"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/models"
 	"github.com/fruitsalade/fruitsalade/shared/pkg/tree"
@@ -357,13 +360,29 @@ func (b *CgoFuseBackend) Flush(path string, fh uint64) int {
 	serverPath := strings.TrimPrefix(h.node.Path, "/")
 
 	ctx := b.ctx
-	resp, err := b.core.UploadReader(ctx, serverPath, reader, h.size)
+	resp, err := b.core.UploadReader(ctx, serverPath, reader, h.size, h.node.Version)
 	if err != nil {
+		// Handle conflict: save local content as conflict copy, refresh metadata
+		if ce, ok := client.AsConflict(err); ok {
+			logger.Info("Conflict detected on %s (expected v%d, server v%d), saving conflict copy",
+				h.node.Path, ce.ExpectedVersion, ce.CurrentVersion)
+
+			conflictPath := strings.TrimPrefix(conflictCopyPath(h.node.Path), "/")
+			conflictReader := io.NewSectionReader(h.tmpFile, 0, h.size)
+			if _, cerr := b.core.UploadReader(ctx, conflictPath, conflictReader, h.size, 0); cerr != nil {
+				logger.Error("Failed to upload conflict copy: %v", cerr)
+			}
+
+			b.core.RefreshMetadata(ctx)
+			h.dirty = false
+			return 0
+		}
+
 		logger.Error("Upload failed for %s: %v", h.node.Path, err)
 		return -fuse.EIO
 	}
 
-	b.core.UpdateMetadataNode(h.node.Path, resp.Size, resp.Hash, time.Now())
+	b.core.UpdateMetadataNode(h.node.Path, resp.Size, resp.Hash, time.Now(), resp.Version)
 
 	// Update cache
 	cacheReader := io.NewSectionReader(h.tmpFile, 0, h.size)
@@ -371,8 +390,17 @@ func (b *CgoFuseBackend) Flush(path string, fh uint64) int {
 	b.core.Cache.Put(fileID, cacheReader, h.size)
 
 	h.dirty = false
-	logger.Info("Uploaded: %s (%d bytes)", h.node.Path, h.size)
+	logger.Info("Uploaded: %s (%d bytes, v%d)", h.node.Path, h.size, resp.Version)
 	return 0
+}
+
+// conflictCopyPath generates a conflict copy path like "/dir/file (conflict 2026-02-20).ext".
+func conflictCopyPath(path string) string {
+	dir := filepath.Dir(path)
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(filepath.Base(path), ext)
+	stamp := time.Now().Format("2006-01-02")
+	return filepath.Join(dir, fmt.Sprintf("%s (conflict %s)%s", base, stamp, ext))
 }
 
 func (b *CgoFuseBackend) Release(path string, fh uint64) int {
@@ -535,7 +563,7 @@ func (b *CgoFuseBackend) Rename(oldpath string, newpath string) int {
 		}
 
 		serverNewPath := strings.TrimPrefix(newResolved, "/")
-		if _, err := b.core.UploadFile(ctx, serverNewPath, cachePath); err != nil {
+		if _, err := b.core.UploadFile(ctx, serverNewPath, cachePath, 0); err != nil {
 			return -fuse.EIO
 		}
 
@@ -567,7 +595,7 @@ func (b *CgoFuseBackend) Truncate(path string, size int64, fh uint64) int {
 		return -fuse.ENOENT
 	}
 
-	b.core.UpdateMetadataNode(node.Path, size, node.Hash, time.Now())
+	b.core.UpdateMetadataNode(node.Path, size, node.Hash, time.Now(), node.Version)
 
 	if fh != ^uint64(0) {
 		h := b.getFh(fh)
@@ -589,7 +617,7 @@ func (b *CgoFuseBackend) Utimens(path string, tmsp []fuse.Timespec) int {
 	}
 	if len(tmsp) >= 2 {
 		mt := time.Unix(tmsp[1].Sec, tmsp[1].Nsec)
-		b.core.UpdateMetadataNode(node.Path, node.Size, node.Hash, mt)
+		b.core.UpdateMetadataNode(node.Path, node.Size, node.Hash, mt, node.Version)
 	}
 	return 0
 }

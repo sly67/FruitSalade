@@ -1,0 +1,31 @@
+FruitSalade User Guide (Updated)
+
+Getting Started
+FruitSalade provides on-demand file synchronization with placeholder support.
+Files appear in your filesystem immediately but content is only downloaded when
+you actually open or read a file. Supports Windows, Linux, and macOS clients.
+
+How It Works
+The FUSE client mounts a virtual filesystem that shows all your files from the
+server. When you run 'ls', only metadata is fetched - no content is transferred.
+When you 'cat' or open a file, the content is fetched from storage and cached.
+
+Caching
+Downloaded files are cached locally using an LRU strategy. The cache has a
+configurable maximum size. When the cache is full, the least recently used files
+are evicted to make room for new downloads. You can pin important files to
+prevent eviction.
+
+Pinning
+Use the pin command to mark files as always-available offline:
+  fruitsalade pin /path/to/important-file.txt
+
+Offline Mode
+If the server becomes unavailable, cached files remain accessible. The client
+will automatically reconnect and refresh metadata when the server comes back.
+Pinned files are always available regardless of connectivity.
+
+Conflict Resolution
+When two devices edit the same file simultaneously, FruitSalade creates a
+conflict copy named "filename (conflict YYYY-MM-DD).ext". Use the web UI
+to compare and resolve conflicts.

@@ -1,0 +1,8 @@
+Quick notes (updated from laptop):
+- Server uses PostgreSQL for metadata
+- Files stored in S3/MinIO or local filesystem
+- JWT tokens + OIDC for authentication
+- FUSE for filesystem integration
+- WebDAV endpoint available at /webdav/
+- Rate limiting enabled per-user
+- File versioning tracks all changes

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -347,13 +348,37 @@ func (g *gzipReadCloser) Close() error {
 
 // UploadResponse holds the response from an upload operation.
 type UploadResponse struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
-	Hash string `json:"hash"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	Hash    string `json:"hash"`
+	Version int    `json:"version"`
+}
+
+// ConflictError is returned when an upload conflicts with the current server version.
+type ConflictError struct {
+	Path            string
+	ExpectedVersion int
+	CurrentVersion  int
+	CurrentHash     string
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("conflict on %s: expected version %d, server has %d",
+		e.Path, e.ExpectedVersion, e.CurrentVersion)
+}
+
+// AsConflict checks if an error is a ConflictError and returns it.
+func AsConflict(err error) (*ConflictError, bool) {
+	var ce *ConflictError
+	if errors.As(err, &ce) {
+		return ce, true
+	}
+	return nil, false
 }
 
 // UploadFile uploads file content to the server.
-func (c *Client) UploadFile(ctx context.Context, path string, content io.Reader, size int64) (*UploadResponse, error) {
+// If expectedVersion > 0, the X-Expected-Version header is sent for conflict detection.
+func (c *Client) UploadFile(ctx context.Context, path string, content io.Reader, size int64, expectedVersion int) (*UploadResponse, error) {
 	var result *UploadResponse
 
 	err := retry.Do(ctx, c.retryConfig, func() error {
@@ -365,6 +390,9 @@ func (c *Client) UploadFile(ctx context.Context, path string, content io.Reader,
 
 		req.ContentLength = size
 		req.Header.Set("Content-Type", "application/octet-stream")
+		if expectedVersion > 0 {
+			req.Header.Set("X-Expected-Version", strconv.Itoa(expectedVersion))
+		}
 		c.applyAuth(req)
 
 		resp, err := c.httpClient.Do(req)
@@ -373,6 +401,21 @@ func (c *Client) UploadFile(ctx context.Context, path string, content io.Reader,
 			return retry.Retryable(err)
 		}
 		defer resp.Body.Close()
+
+		// Handle 409 Conflict — NOT retryable
+		if resp.StatusCode == http.StatusConflict {
+			c.setOnline(true)
+			var cr protocol.ConflictResponse
+			if json.NewDecoder(resp.Body).Decode(&cr) == nil {
+				return &ConflictError{
+					Path:            cr.Path,
+					ExpectedVersion: cr.ExpectedVersion,
+					CurrentVersion:  cr.CurrentVersion,
+					CurrentHash:     cr.CurrentHash,
+				}
+			}
+			return &ConflictError{Path: path, ExpectedVersion: expectedVersion}
+		}
 
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 			c.setOnline(false)

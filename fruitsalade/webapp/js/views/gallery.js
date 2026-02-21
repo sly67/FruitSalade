@@ -1698,6 +1698,66 @@ function renderGallery() {
         observer.observe(sentinel);
     }
 
+    // ── Gallery Share Modal ──────────────────────────────────────────────────
+
+    function showGalleryShareModal(path) {
+        var contentDiv = document.createElement('div');
+        contentDiv.innerHTML =
+            '<form id="gallery-share-form">' +
+                '<div class="form-group">' +
+                    '<label>Password (optional)</label>' +
+                    '<input type="text" id="gallery-share-password" placeholder="Leave empty for no password">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Expires in (seconds, optional)</label>' +
+                    '<input type="number" id="gallery-share-expiry" placeholder="e.g. 86400 for 1 day">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Max downloads (optional)</label>' +
+                    '<input type="number" id="gallery-share-max-dl" placeholder="0 = unlimited">' +
+                '</div>' +
+                '<button type="submit" class="btn">Create Share Link</button>' +
+            '</form>' +
+            '<div id="gallery-share-result"></div>';
+
+        Modal.open({ title: 'Share: ' + path.split('/').pop(), content: contentDiv });
+
+        document.getElementById('gallery-share-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var body = {};
+            var pw = document.getElementById('gallery-share-password').value;
+            var exp = document.getElementById('gallery-share-expiry').value;
+            var maxDl = document.getElementById('gallery-share-max-dl').value;
+            if (pw) body.password = pw;
+            if (exp) body.expires_in_sec = parseInt(exp, 10);
+            if (maxDl) body.max_downloads = parseInt(maxDl, 10);
+
+            API.post('/api/v1/share/' + API.encodeURIPath(path.replace(/^\//, '')), body)
+                .then(function(resp) { return resp.json(); })
+                .then(function(data) {
+                    if (data.error) {
+                        document.getElementById('gallery-share-result').innerHTML =
+                            '<div class="alert alert-error">' + esc(data.error) + '</div>';
+                        return;
+                    }
+                    var shareUrl = window.location.origin + '/app/#share/' + data.id;
+                    if (pw) shareUrl += '/' + pw;
+                    document.getElementById('gallery-share-result').innerHTML =
+                        '<div class="alert alert-success">Share link created!</div>' +
+                        '<div class="share-url">' +
+                            '<input type="text" id="gallery-share-url-input" readonly value="' + esc(shareUrl) + '">' +
+                            '<button class="btn btn-sm" id="gallery-btn-copy-url">Copy</button>' +
+                        '</div>';
+                    document.getElementById('gallery-btn-copy-url').addEventListener('click', function() {
+                        var inp = document.getElementById('gallery-share-url-input');
+                        inp.select();
+                        document.execCommand('copy');
+                        Toast.success('Copied to clipboard');
+                    });
+                });
+        });
+    }
+
     // ── Lightbox ─────────────────────────────────────────────────────────────
 
     function openLightbox(index) {
@@ -1730,6 +1790,7 @@ function renderGallery() {
             '<div class="lightbox-toolbar">' +
                 '<button class="lightbox-btn" id="lb-info-btn" title="Info">&#9432;</button>' +
                 '<button class="lightbox-btn" id="lb-download-btn" title="Download">&#11015;</button>' +
+                '<button class="lightbox-btn" id="lb-share-btn" title="Share">&#128279;</button>' +
                 (activeAlbumId ? '<button class="lightbox-btn" id="lb-set-cover-btn" title="Set as Album Cover">&#9733;</button>' : '') +
                 '<span class="lightbox-counter" id="lb-counter"></span>' +
             '</div>';
@@ -1789,6 +1850,12 @@ function renderGallery() {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+        });
+
+        // Wire share
+        document.getElementById('lb-share-btn').addEventListener('click', function() {
+            var curItem = items[currentIndex];
+            showGalleryShareModal(curItem.file_path);
         });
 
         // Click outside to close
@@ -2124,10 +2191,10 @@ function renderGallery() {
     function renderLightboxAlbums(container, albums, item) {
         var html = '';
         for (var i = 0; i < albums.length; i++) {
-            html += '<div class="lightbox-album-row">' +
-                '<button class="lightbox-album-link" data-album-id="' + albums[i].id + '" data-album-name="' + esc(albums[i].name) + '">' + esc(albums[i].name) + '</button>' +
-                '<button class="lightbox-album-remove" data-album-id="' + albums[i].id + '" title="Remove from album">&times;</button>' +
-            '</div>';
+            html += '<span class="lightbox-album-pill" data-album-id="' + albums[i].id + '" data-album-name="' + esc(albums[i].name) + '">' +
+                '<span class="lightbox-album-label">' + esc(albums[i].name) + '</span>' +
+                '<button class="lightbox-album-x" data-album-id="' + albums[i].id + '" title="Remove from album">&times;</button>' +
+            '</span>';
         }
         html += '<div class="lightbox-album-add">' +
             '<select id="lb-album-select"><option value="">Add to album...</option></select>' +
@@ -2159,24 +2226,26 @@ function renderGallery() {
                 .catch(function() { Toast.error('Failed to add'); });
         });
 
-        // Wire album name clicks (enter album view)
-        var albumLinks = container.querySelectorAll('.lightbox-album-link');
-        for (var al = 0; al < albumLinks.length; al++) {
-            (function(link) {
-                link.addEventListener('click', function() {
-                    var albumId = parseInt(link.getAttribute('data-album-id'), 10);
-                    var albumName = link.getAttribute('data-album-name');
+        // Wire album pill clicks (enter album view)
+        var albumPills = container.querySelectorAll('.lightbox-album-pill');
+        for (var al = 0; al < albumPills.length; al++) {
+            (function(pill) {
+                pill.addEventListener('click', function(e) {
+                    if (e.target.classList.contains('lightbox-album-x')) return;
+                    var albumId = parseInt(pill.getAttribute('data-album-id'), 10);
+                    var albumName = pill.getAttribute('data-album-name');
                     closeLightbox();
                     enterAlbumView(albumId, albumName);
                 });
-            })(albumLinks[al]);
+            })(albumPills[al]);
         }
 
         // Wire remove buttons
-        var removeBtns = container.querySelectorAll('.lightbox-album-remove');
+        var removeBtns = container.querySelectorAll('.lightbox-album-x');
         for (var rb = 0; rb < removeBtns.length; rb++) {
             (function(btn) {
-                btn.addEventListener('click', function() {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
                     var albumId = parseInt(btn.getAttribute('data-album-id'), 10);
                     API.del('/api/v1/gallery/albums/' + albumId + '/images', { file_path: item.file_path })
                         .then(function() {

@@ -167,6 +167,8 @@ func (s *Server) Handler() http.Handler {
 	// Public endpoints (no auth required)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /api/v1/auth/token", s.auth.HandleLogin)
+	mux.HandleFunc("POST /api/v1/auth/device-code", s.handleDeviceCodeInit)
+	mux.HandleFunc("POST /api/v1/auth/device-token", s.handleDeviceCodePoll)
 
 	// Public share link endpoints (no auth)
 	mux.HandleFunc("GET /api/v1/share/{token}/info", s.handleShareInfo)

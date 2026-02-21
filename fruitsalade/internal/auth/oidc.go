@@ -16,11 +16,13 @@ import (
 
 // OIDCConfig holds OIDC provider configuration.
 type OIDCConfig struct {
-	IssuerURL    string // e.g. https://keycloak.example.com/realms/fruitsalade
-	ClientID     string
-	ClientSecret string
-	AdminClaim   string // claim key for admin status (default: "is_admin")
-	AdminValue   string // claim value that indicates admin (default: "true")
+	IssuerURL            string // e.g. https://keycloak.example.com/realms/fruitsalade
+	ClientID             string
+	ClientSecret         string
+	AdminClaim           string // claim key for admin status (default: "is_admin")
+	AdminValue           string // claim value that indicates admin (default: "true")
+	DeviceAuthEndpoint   string // discovered from OIDC metadata
+	TokenEndpoint        string // discovered from OIDC metadata
 }
 
 // OIDCProvider validates OIDC tokens and auto-creates local users.
@@ -44,6 +46,16 @@ func NewOIDCProvider(ctx context.Context, cfg OIDCConfig, a *Auth) (*OIDCProvide
 
 	verifier := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 
+	// Discover device_authorization_endpoint and token_endpoint from OIDC metadata
+	var providerClaims struct {
+		DeviceAuthEndpoint string `json:"device_authorization_endpoint"`
+		TokenEndpoint      string `json:"token_endpoint"`
+	}
+	if err := provider.Claims(&providerClaims); err == nil {
+		cfg.DeviceAuthEndpoint = providerClaims.DeviceAuthEndpoint
+		cfg.TokenEndpoint = providerClaims.TokenEndpoint
+	}
+
 	if cfg.AdminClaim == "" {
 		cfg.AdminClaim = "is_admin"
 	}
@@ -53,7 +65,9 @@ func NewOIDCProvider(ctx context.Context, cfg OIDCConfig, a *Auth) (*OIDCProvide
 
 	logging.Info("OIDC provider initialized",
 		zap.String("issuer", cfg.IssuerURL),
-		zap.String("client_id", cfg.ClientID))
+		zap.String("client_id", cfg.ClientID),
+		zap.String("device_auth_endpoint", cfg.DeviceAuthEndpoint),
+		zap.String("token_endpoint", cfg.TokenEndpoint))
 
 	return &OIDCProvider{
 		verifier: verifier,

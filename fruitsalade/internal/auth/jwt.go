@@ -296,6 +296,15 @@ func (a *Auth) HasOIDC() bool {
 	return a.oidc != nil
 }
 
+// OIDCConfig returns the OIDC configuration, or nil if OIDC is not configured.
+func (a *Auth) OIDCConfig() *OIDCConfig {
+	if a.oidc == nil {
+		return nil
+	}
+	cfg := a.oidc.config
+	return &cfg
+}
+
 // DB returns the underlying database connection.
 func (a *Auth) DB() *sql.DB {
 	return a.db
