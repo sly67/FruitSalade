@@ -169,6 +169,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/token", s.auth.HandleLogin)
 	mux.HandleFunc("POST /api/v1/auth/device-code", s.handleDeviceCodeInit)
 	mux.HandleFunc("POST /api/v1/auth/device-token", s.handleDeviceCodePoll)
+	mux.HandleFunc("POST /api/v1/auth/totp/verify", s.handleTOTPVerify)
 
 	// Public share link endpoints (no auth)
 	mux.HandleFunc("GET /api/v1/share/{token}/info", s.handleShareInfo)
@@ -250,6 +251,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/admin/users/{userID}/groups", s.handleUserGroups)
 	protected.HandleFunc("GET /api/v1/admin/sharelinks", s.handleListShareLinks)
 	protected.HandleFunc("GET /api/v1/admin/stats", s.handleDashboardStats)
+	protected.HandleFunc("GET /api/v1/admin/storage-dashboard", s.handleStorageDashboard)
 	protected.HandleFunc("GET /api/v1/admin/config", s.handleGetConfig)
 	protected.HandleFunc("PUT /api/v1/admin/config", s.handleUpdateConfig)
 
@@ -353,6 +355,13 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /api/v1/auth/refresh", s.handleRefreshToken)
 	protected.HandleFunc("GET /api/v1/auth/sessions", s.handleListSessions)
 	protected.HandleFunc("DELETE /api/v1/auth/sessions/{tokenID}", s.handleRevokeSession)
+
+	// TOTP 2FA endpoints (user-facing, protected)
+	protected.HandleFunc("GET /api/v1/auth/totp/status", s.handleTOTPStatus)
+	protected.HandleFunc("POST /api/v1/auth/totp/setup", s.handleTOTPSetup)
+	protected.HandleFunc("POST /api/v1/auth/totp/enable", s.handleTOTPEnable)
+	protected.HandleFunc("POST /api/v1/auth/totp/disable", s.handleTOTPDisable)
+	protected.HandleFunc("POST /api/v1/auth/totp/backup", s.handleTOTPBackup)
 
 	// User usage endpoint
 	protected.HandleFunc("GET /api/v1/usage", s.handleGetUsage)
@@ -1712,7 +1721,15 @@ func (s *Server) handleUserDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storageUsed, _ := s.quotaStore.GetStorageUsed(ctx, claims.UserID)
+	var storageUsed int64
+	if claims.IsAdmin {
+		db := s.auth.DB()
+		db.QueryRowContext(ctx,
+			`SELECT COALESCE(SUM(size), 0) FROM files WHERE is_dir = FALSE AND deleted_at IS NULL`,
+		).Scan(&storageUsed)
+	} else {
+		storageUsed, _ = s.quotaStore.GetStorageUsed(ctx, claims.UserID)
+	}
 	bIn, bOut, _ := s.quotaStore.GetBandwidthToday(ctx, claims.UserID)
 
 	// Groups
@@ -1729,12 +1746,18 @@ func (s *Server) handleUserDashboard(w http.ResponseWriter, r *http.Request) {
 		groups = []protocol.UserGroupInfo{}
 	}
 
-	// File count (owned by user)
+	// File count (accessible to user)
 	var fileCount int
 	db := s.auth.DB()
-	db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM files WHERE owner_id = $1 AND is_dir = FALSE`,
-		claims.UserID).Scan(&fileCount)
+	if claims.IsAdmin {
+		db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM files WHERE is_dir = FALSE AND deleted_at IS NULL`,
+		).Scan(&fileCount)
+	} else {
+		db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM files WHERE (owner_id = $1 OR visibility = 'public') AND is_dir = FALSE AND deleted_at IS NULL`,
+			claims.UserID).Scan(&fileCount)
+	}
 
 	// Active share link count
 	var shareLinkCount int

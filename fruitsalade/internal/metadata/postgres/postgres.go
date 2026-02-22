@@ -1000,6 +1000,251 @@ func (s *Store) CopyFileRow(ctx context.Context, srcPath, dstPath string) error 
 	return nil
 }
 
+// ─── Storage Dashboard Analytics ─────────────────────────────────────────
+
+// UserStorageBreakdown is storage usage for a single user.
+type UserStorageBreakdown struct {
+	UserID   int    `json:"user_id"`
+	Username string `json:"username"`
+	Size     int64  `json:"size"`
+	Count    int    `json:"count"`
+}
+
+// GroupStorageBreakdown is storage usage for a single group.
+type GroupStorageBreakdown struct {
+	GroupID   int    `json:"group_id"`
+	GroupName string `json:"group_name"`
+	Size      int64  `json:"size"`
+	Count     int    `json:"count"`
+}
+
+// TypeStorageBreakdown is storage usage for a file extension category.
+type TypeStorageBreakdown struct {
+	Extension string `json:"extension"`
+	Category  string `json:"category"`
+	Size      int64  `json:"size"`
+	Count     int    `json:"count"`
+}
+
+// LocationStorageBreakdown is storage usage for a storage location.
+type LocationStorageBreakdown struct {
+	LocationID  int    `json:"location_id"`
+	Name        string `json:"name"`
+	BackendType string `json:"backend_type"`
+	Size        int64  `json:"size"`
+	Count       int    `json:"count"`
+}
+
+// VisibilityStorageBreakdown is storage usage by visibility setting.
+type VisibilityStorageBreakdown struct {
+	Visibility string `json:"visibility"`
+	Size       int64  `json:"size"`
+	Count      int    `json:"count"`
+}
+
+// StorageGrowthPoint is a daily data point for cumulative storage growth.
+type StorageGrowthPoint struct {
+	Date       string `json:"date"`
+	TotalSize  int64  `json:"total_size"`
+	TotalFiles int    `json:"total_files"`
+}
+
+// StorageByUser returns storage breakdown by user.
+func (s *Store) StorageByUser(ctx context.Context) ([]UserStorageBreakdown, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT COALESCE(f.owner_id, 0), COALESCE(u.username, 'unknown'),
+		        COALESCE(SUM(f.size), 0), COUNT(*)
+		 FROM files f
+		 LEFT JOIN users u ON u.id = f.owner_id
+		 WHERE f.deleted_at IS NULL AND f.is_dir = FALSE
+		 GROUP BY f.owner_id, u.username
+		 ORDER BY SUM(f.size) DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("storage by user: %w", err)
+	}
+	defer rows.Close()
+
+	var result []UserStorageBreakdown
+	for rows.Next() {
+		var b UserStorageBreakdown
+		if err := rows.Scan(&b.UserID, &b.Username, &b.Size, &b.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, b)
+	}
+	return result, rows.Err()
+}
+
+// StorageByGroup returns storage breakdown by group.
+func (s *Store) StorageByGroup(ctx context.Context) ([]GroupStorageBreakdown, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT COALESCE(f.group_id, 0), COALESCE(g.name, 'No Group'),
+		        COALESCE(SUM(f.size), 0), COUNT(*)
+		 FROM files f
+		 LEFT JOIN groups g ON g.id = f.group_id
+		 WHERE f.deleted_at IS NULL AND f.is_dir = FALSE
+		 GROUP BY f.group_id, g.name
+		 ORDER BY SUM(f.size) DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("storage by group: %w", err)
+	}
+	defer rows.Close()
+
+	var result []GroupStorageBreakdown
+	for rows.Next() {
+		var b GroupStorageBreakdown
+		if err := rows.Scan(&b.GroupID, &b.GroupName, &b.Size, &b.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, b)
+	}
+	return result, rows.Err()
+}
+
+// StorageByFileType returns storage breakdown by file extension category.
+func (s *Store) StorageByFileType(ctx context.Context) ([]TypeStorageBreakdown, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT LOWER(COALESCE(NULLIF(
+		        SUBSTRING(name FROM '\.([^.]+)$'), ''), 'none')),
+		        COALESCE(SUM(size), 0), COUNT(*)
+		 FROM files
+		 WHERE deleted_at IS NULL AND is_dir = FALSE
+		 GROUP BY 1
+		 ORDER BY SUM(size) DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("storage by type: %w", err)
+	}
+	defer rows.Close()
+
+	var result []TypeStorageBreakdown
+	for rows.Next() {
+		var b TypeStorageBreakdown
+		if err := rows.Scan(&b.Extension, &b.Size, &b.Count); err != nil {
+			return nil, err
+		}
+		b.Category = extensionCategory(b.Extension)
+		result = append(result, b)
+	}
+	return result, rows.Err()
+}
+
+// StorageByLocation returns storage breakdown by storage location.
+func (s *Store) StorageByLocation(ctx context.Context) ([]LocationStorageBreakdown, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT COALESCE(f.storage_location_id, 0),
+		        COALESCE(sl.name, 'Default'),
+		        COALESCE(sl.backend_type, 'local'),
+		        COALESCE(SUM(f.size), 0), COUNT(*)
+		 FROM files f
+		 LEFT JOIN storage_locations sl ON sl.id = f.storage_location_id
+		 WHERE f.deleted_at IS NULL AND f.is_dir = FALSE
+		 GROUP BY f.storage_location_id, sl.name, sl.backend_type
+		 ORDER BY SUM(f.size) DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("storage by location: %w", err)
+	}
+	defer rows.Close()
+
+	var result []LocationStorageBreakdown
+	for rows.Next() {
+		var b LocationStorageBreakdown
+		if err := rows.Scan(&b.LocationID, &b.Name, &b.BackendType, &b.Size, &b.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, b)
+	}
+	return result, rows.Err()
+}
+
+// StorageByVisibility returns storage breakdown by visibility setting.
+func (s *Store) StorageByVisibility(ctx context.Context) ([]VisibilityStorageBreakdown, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT COALESCE(NULLIF(visibility, ''), 'public'),
+		        COALESCE(SUM(size), 0), COUNT(*)
+		 FROM files
+		 WHERE deleted_at IS NULL AND is_dir = FALSE
+		 GROUP BY 1
+		 ORDER BY SUM(size) DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("storage by visibility: %w", err)
+	}
+	defer rows.Close()
+
+	var result []VisibilityStorageBreakdown
+	for rows.Next() {
+		var b VisibilityStorageBreakdown
+		if err := rows.Scan(&b.Visibility, &b.Size, &b.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, b)
+	}
+	return result, rows.Err()
+}
+
+// StorageGrowth returns cumulative storage growth over the given number of days.
+func (s *Store) StorageGrowth(ctx context.Context, days int) ([]StorageGrowthPoint, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`WITH daily AS (
+		    SELECT DATE(created_at) AS d,
+		           COALESCE(SUM(size), 0) AS day_size,
+		           COUNT(*) AS day_files
+		    FROM files
+		    WHERE deleted_at IS NULL AND is_dir = FALSE
+		      AND created_at >= NOW() - ($1 || ' days')::INTERVAL
+		    GROUP BY DATE(created_at)
+		 )
+		 SELECT d::TEXT,
+		        SUM(day_size) OVER (ORDER BY d) AS total_size,
+		        SUM(day_files) OVER (ORDER BY d)::INT AS total_files
+		 FROM daily
+		 ORDER BY d`, days)
+	if err != nil {
+		return nil, fmt.Errorf("storage growth: %w", err)
+	}
+	defer rows.Close()
+
+	var result []StorageGrowthPoint
+	for rows.Next() {
+		var p StorageGrowthPoint
+		if err := rows.Scan(&p.Date, &p.TotalSize, &p.TotalFiles); err != nil {
+			return nil, err
+		}
+		result = append(result, p)
+	}
+	return result, rows.Err()
+}
+
+// TrashStats returns total size and count of trashed files.
+func (s *Store) TrashStats(ctx context.Context) (int64, int, error) {
+	var totalSize int64
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(size), 0), COUNT(*)
+		 FROM files WHERE deleted_at IS NOT NULL AND is_dir = FALSE`).
+		Scan(&totalSize, &count)
+	return totalSize, count, err
+}
+
+// extensionCategory maps a file extension to a broad category.
+func extensionCategory(ext string) string {
+	switch ext {
+	case "jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "tiff", "ico", "heic", "heif", "raw", "cr2", "nef":
+		return "Images"
+	case "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v":
+		return "Videos"
+	case "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a":
+		return "Audio"
+	case "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "txt", "rtf", "csv":
+		return "Documents"
+	case "zip", "tar", "gz", "bz2", "7z", "rar", "xz", "zst":
+		return "Archives"
+	case "go", "js", "ts", "py", "java", "c", "cpp", "h", "rs", "rb", "php", "html", "css", "json", "xml", "yaml", "yml", "toml", "sh", "sql":
+		return "Code"
+	default:
+		return "Other"
+	}
+}
+
 func fileID(path string) string {
 	h := sha256.Sum256([]byte(path))
 	return fmt.Sprintf("%x", h[:8])

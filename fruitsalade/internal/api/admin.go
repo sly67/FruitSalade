@@ -10,6 +10,7 @@ import (
 
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/auth"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/logging"
+	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/metadata/postgres"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/sharing"
 )
 
@@ -416,5 +417,76 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 			"default_max_bandwidth": cfg.DefaultMaxBandwidth,
 			"default_requests_per_min": cfg.DefaultRequestsPerMin,
 		},
+	})
+}
+
+// ─── Storage Dashboard ──────────────────────────────────────────────────────
+
+func (s *Server) handleStorageDashboard(w http.ResponseWriter, r *http.Request) {
+	if s.requireAdmin(w, r) == nil {
+		return
+	}
+
+	ctx := r.Context()
+
+	byUser, _ := s.metadata.StorageByUser(ctx)
+	byGroup, _ := s.metadata.StorageByGroup(ctx)
+	byType, _ := s.metadata.StorageByFileType(ctx)
+	byLocation, _ := s.metadata.StorageByLocation(ctx)
+	byVisibility, _ := s.metadata.StorageByVisibility(ctx)
+	growth, _ := s.metadata.StorageGrowth(ctx, 90)
+	trashSize, trashCount, _ := s.metadata.TrashStats(ctx)
+
+	// Aggregate type breakdown by category
+	categoryMap := make(map[string][2]int64) // [size, count]
+	if byType != nil {
+		for _, t := range byType {
+			cat := t.Category
+			entry := categoryMap[cat]
+			entry[0] += t.Size
+			entry[1] += int64(t.Count)
+			categoryMap[cat] = entry
+		}
+	}
+	type catEntry struct {
+		Category string `json:"category"`
+		Size     int64  `json:"size"`
+		Count    int    `json:"count"`
+	}
+	var byCategory []catEntry
+	for cat, v := range categoryMap {
+		byCategory = append(byCategory, catEntry{Category: cat, Size: v[0], Count: int(v[1])})
+	}
+
+	// Total storage
+	var totalSize int64
+	var totalFiles int
+	if byUser != nil {
+		for _, u := range byUser {
+			totalSize += u.Size
+			totalFiles += u.Count
+		}
+	}
+
+	// Null-safe arrays
+	if byUser == nil { byUser = []postgres.UserStorageBreakdown{} }
+	if byGroup == nil { byGroup = []postgres.GroupStorageBreakdown{} }
+	if byLocation == nil { byLocation = []postgres.LocationStorageBreakdown{} }
+	if byVisibility == nil { byVisibility = []postgres.VisibilityStorageBreakdown{} }
+	if growth == nil { growth = []postgres.StorageGrowthPoint{} }
+	if byCategory == nil { byCategory = []catEntry{} }
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"total_size":    totalSize,
+		"total_files":   totalFiles,
+		"trash_size":    trashSize,
+		"trash_count":   trashCount,
+		"by_user":       byUser,
+		"by_group":      byGroup,
+		"by_category":   byCategory,
+		"by_location":   byLocation,
+		"by_visibility": byVisibility,
+		"growth":        growth,
 	})
 }

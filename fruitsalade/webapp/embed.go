@@ -3,5 +3,5 @@ package webapp
 
 import "embed"
 
-//go:embed index.html css js
+//go:embed index.html css js manifest.json icons service-worker.js
 var Assets embed.FS

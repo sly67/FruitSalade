@@ -138,6 +138,23 @@ func (a *Auth) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if TOTP is enabled — if so, return a temp token for 2FA verification
+	totpEnabled, _ := a.IsTOTPEnabled(r.Context(), userID)
+	if totpEnabled {
+		tempToken, err := a.GenerateTOTPTempToken(userID, req.Username, isAdmin)
+		if err != nil {
+			logging.Error("failed to generate TOTP temp token", zap.Error(err))
+			sendAuthError(w, http.StatusInternalServerError, "failed to generate token")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"requires_2fa": true,
+			"totp_token":   tempToken,
+		})
+		return
+	}
+
 	// Generate JWT
 	now := time.Now()
 	claims := &Claims{
@@ -225,6 +242,43 @@ func (a *Auth) EnsureDefaultAdmin(ctx context.Context) error {
 		return a.CreateUser(ctx, "admin", "admin", true)
 	}
 	return nil
+}
+
+// IssueToken generates a full JWT and records a device token entry.
+// Used by TOTP verify after 2FA validation completes.
+func (a *Auth) IssueToken(ctx context.Context, userID int, username string, isAdmin bool, deviceName string) (string, time.Time, error) {
+	now := time.Now()
+	claims := &Claims{
+		UserID:   userID,
+		Username: username,
+		IsAdmin:  isAdmin,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(30 * 24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			Issuer:    "fruitsalade",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenStr, err := token.SignedString(a.secret)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("sign token: %w", err)
+	}
+
+	if deviceName == "" {
+		deviceName = "unknown"
+	}
+	tokenHash := hashToken(tokenStr)
+	_, err = a.db.ExecContext(ctx,
+		`INSERT INTO device_tokens (user_id, device_name, token_hash) VALUES ($1, $2, $3)`,
+		userID, deviceName, tokenHash)
+	if err != nil {
+		logging.Error("failed to record device token", zap.Error(err))
+	}
+
+	a.updateActiveTokenCount(ctx)
+
+	return tokenStr, claims.ExpiresAt.Time, nil
 }
 
 func (a *Auth) validateToken(tokenStr string) (*Claims, error) {

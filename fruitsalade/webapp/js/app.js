@@ -383,6 +383,49 @@
     isMobile = mql.matches;
     mql.addEventListener('change', onMediaChange);
 
+    // ── Service Worker / PWA ─────────────────────────────────────────────────
+
+    var deferredInstallPrompt = null;
+
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('service-worker.js', { scope: '/app/' })
+            .catch(function(err) {
+                console.warn('SW registration failed:', err);
+            });
+    }
+
+    window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        deferredInstallPrompt = e;
+        // Show install banner in topbar
+        var existing = document.getElementById('pwa-install-btn');
+        if (!existing) {
+            var btn = document.createElement('button');
+            btn.id = 'pwa-install-btn';
+            btn.className = 'btn btn-sm pwa-install-btn';
+            btn.textContent = 'Install App';
+            btn.addEventListener('click', function() {
+                if (deferredInstallPrompt) {
+                    deferredInstallPrompt.prompt();
+                    deferredInstallPrompt.userChoice.then(function() {
+                        deferredInstallPrompt = null;
+                        btn.remove();
+                    });
+                }
+            });
+            var topbarUser = document.querySelector('.topbar-user');
+            if (topbarUser) {
+                topbarUser.parentNode.insertBefore(btn, topbarUser);
+            }
+        }
+    });
+
+    window.addEventListener('appinstalled', function() {
+        deferredInstallPrompt = null;
+        var btn = document.getElementById('pwa-install-btn');
+        if (btn) btn.remove();
+    });
+
     // ── Event Listeners ─────────────────────────────────────────────────────
 
     window.addEventListener('hashchange', navigate);
