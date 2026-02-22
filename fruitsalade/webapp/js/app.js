@@ -14,7 +14,10 @@
         'storage':          renderStorage,
         'gallery':          renderGallery,
         'gallery-plugins':  renderGalleryPlugins,
-        'share':            renderShareDownload
+        'share':            renderShareDownload,
+        'trash':            renderTrash,
+        'search':           renderSearch,
+        'favorites':        renderFavorites
     };
 
     // Admin-only routes
@@ -164,7 +167,7 @@
         }
         // Highlight More tab if current route is an admin/more route
         var moreTab = document.getElementById('tab-more');
-        var moreRoutes = ['shares', 'users', 'groups', 'storage', 'gallery-plugins', 'admin-shares', 'settings'];
+        var moreRoutes = ['shares', 'trash', 'favorites', 'search', 'users', 'groups', 'storage', 'gallery-plugins', 'admin-shares', 'settings'];
         if (moreRoutes.indexOf(route) !== -1) {
             moreTab.classList.add('active');
         } else {
@@ -188,7 +191,10 @@
         menu.id = 'more-menu';
 
         var items = [
-            { route: 'shares', icon: '&#128279;', label: 'My Shares' }
+            { route: 'favorites', icon: '&#11088;', label: 'Favorites' },
+            { route: 'shares', icon: '&#128279;', label: 'My Shares' },
+            { route: 'trash', icon: '&#128465;', label: 'Trash' },
+            { route: 'search', icon: '&#128269;', label: 'Search' }
         ];
 
         if (isAdmin()) {
@@ -302,27 +308,18 @@
             e.preventDefault();
             var q = globalSearchInput.value.trim();
             if (!q) return;
-            // Navigate to browser and trigger search
-            var route = getRoute();
-            if (route !== 'browser') {
-                window.location.hash = '#browser';
-                // Wait for navigation to render, then set search
-                setTimeout(function() {
-                    var browserSearch = document.getElementById('search-input');
-                    if (browserSearch) {
-                        browserSearch.value = q;
-                        browserSearch.dispatchEvent(new Event('input'));
-                    }
-                }, 100);
-            } else {
-                var browserSearch = document.getElementById('search-input');
-                if (browserSearch) {
-                    browserSearch.value = q;
-                    browserSearch.dispatchEvent(new Event('input'));
-                    browserSearch.focus();
-                }
-            }
+            window.location.hash = '#search/' + encodeURIComponent(q);
             globalSearchInput.blur();
+        }
+    });
+
+    // Ctrl+K / Cmd+K shortcut to focus search
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            if (API.isAuthenticated()) {
+                window.location.hash = '#search';
+            }
         }
     });
 

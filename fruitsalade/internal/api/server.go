@@ -320,6 +320,27 @@ func (s *Server) Handler() http.Handler {
 		protected.HandleFunc("PUT /api/v1/admin/gallery/tags/{tag}", s.handleRenameTagGlobal)
 	}
 
+	// Trash endpoints
+	protected.HandleFunc("GET /api/v1/trash", s.handleTrashList)
+	protected.HandleFunc("POST /api/v1/trash/restore", s.handleTrashRestore)
+	protected.HandleFunc("DELETE /api/v1/trash/{path...}", s.handleTrashPurge)
+	protected.HandleFunc("DELETE /api/v1/trash", s.handleTrashEmpty)
+
+	// Favorites endpoints
+	protected.HandleFunc("GET /api/v1/favorites", s.handleListFavorites)
+	protected.HandleFunc("GET /api/v1/favorites/paths", s.handleListFavoritePaths)
+	protected.HandleFunc("PUT /api/v1/favorites/{path...}", s.handleAddFavorite)
+	protected.HandleFunc("DELETE /api/v1/favorites/{path...}", s.handleRemoveFavorite)
+
+	// Search endpoint
+	protected.HandleFunc("GET /api/v1/search", s.handleSearch)
+
+	// Bulk operation endpoints
+	protected.HandleFunc("POST /api/v1/bulk/move", s.handleBulkMove)
+	protected.HandleFunc("POST /api/v1/bulk/copy", s.handleBulkCopy)
+	protected.HandleFunc("POST /api/v1/bulk/share", s.handleBulkShare)
+	protected.HandleFunc("POST /api/v1/bulk/tag", s.handleBulkTag)
+
 	// File properties endpoint
 	protected.HandleFunc("GET /api/v1/properties/{path...}", s.handleFileProperties)
 
@@ -1025,79 +1046,27 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if fileRow.IsDir {
-		// Delete directory and all children from storage
-		rows, err := s.metadata.ListDir(r.Context(), path)
-		if err == nil {
-			for _, row := range rows {
-				if !row.IsDir {
-					s3Key := strings.TrimPrefix(row.Path, "/")
-					// Resolve backend for each file — use default as fallback
-					backend, _, _ := s.storageRouter.GetDefault()
-					if backend != nil {
-						backend.DeleteObject(r.Context(), s3Key)
-					}
-				}
-			}
-		}
-
-		// Delete from metadata (cascading delete)
-		deleted, err := s.metadata.DeleteTree(r.Context(), path)
-		if err != nil {
-			s.sendError(w, http.StatusInternalServerError, "failed to delete: "+err.Error())
-			return
-		}
-
-		s.RefreshTree(r.Context())
-
-		logging.Info("directory deleted", zap.String("path", path), zap.Int64("items", deleted))
-
-		s.publishEvent(events.EventDelete, path, 0, "", 0)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"path":    path,
-			"deleted": deleted,
-		})
-	} else {
-		// Gallery: cleanup thumbnail before deleting file
-		if s.galleryStore != nil {
-			thumbKey := s.galleryStore.GetThumbKey(r.Context(), path)
-			if thumbKey != "" {
-				if defaultBackend, _, err := s.storageRouter.GetDefault(); err == nil && defaultBackend != nil {
-					defaultBackend.DeleteObject(r.Context(), thumbKey)
-				}
-			}
-			s.galleryStore.DeleteMetadata(r.Context(), path)
-		}
-
-		// Delete file from storage
-		s3Key := strings.TrimPrefix(path, "/")
-		backend, _, _ := s.storageRouter.ResolveForFile(r.Context(), fileRow.StorageLocID, fileRow.GroupID)
-		if backend != nil {
-			if err := backend.DeleteObject(r.Context(), s3Key); err != nil {
-				logging.Warn("failed to delete from storage", zap.String("key", s3Key), zap.Error(err))
-			}
-		}
-
-		// Delete from metadata
-		if err := s.metadata.DeleteFile(r.Context(), path); err != nil {
-			s.sendError(w, http.StatusInternalServerError, "failed to delete: "+err.Error())
-			return
-		}
-
-		s.RefreshTree(r.Context())
-
-		logging.Info("file deleted", zap.String("path", path))
-
-		s.publishEvent(events.EventDelete, path, 0, "", 0)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"path":    path,
-			"deleted": 1,
-		})
+	// Soft-delete: move to trash instead of permanent delete
+	userID := 0
+	if claims != nil {
+		userID = claims.UserID
 	}
+	if err := s.metadata.SoftDeleteFile(r.Context(), path, userID); err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to delete: "+err.Error())
+		return
+	}
+
+	s.RefreshTree(r.Context())
+
+	logging.Info("file moved to trash", zap.String("path", path))
+
+	s.publishEvent(events.EventDelete, path, 0, "", 0)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"path":    path,
+		"trashed": true,
+	})
 }
 
 // ─── Versions ───────────────────────────────────────────────────────────────

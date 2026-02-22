@@ -13,7 +13,9 @@ function renderBrowser() {
                 '</div>' +
                 '<button class="btn btn-sm" id="btn-new-folder">New Folder</button>' +
                 '<button class="btn btn-sm" id="btn-upload">Upload</button>' +
+                '<button class="btn btn-sm btn-outline" id="btn-upload-folder">Upload Folder</button>' +
                 '<input type="file" id="file-input" multiple style="display:none">' +
+                '<input type="file" id="folder-input" webkitdirectory multiple style="display:none">' +
             '</div>' +
         '</div>' +
         '<div id="breadcrumb" class="breadcrumb"></div>' +
@@ -35,6 +37,7 @@ function renderBrowser() {
     var fileInput = document.getElementById('file-input');
     var dropZone = document.getElementById('drop-zone');
     var allItems = [];
+    var userFavorites = {};
 
     // Sort state
     var sortField = 'name';
@@ -108,11 +111,19 @@ function renderBrowser() {
         bar.innerHTML =
             '<span class="batch-count">' + count + ' selected</span>' +
             '<button class="btn btn-sm" id="batch-download">Download</button>' +
+            '<button class="btn btn-sm" id="batch-move">Move</button>' +
+            '<button class="btn btn-sm" id="batch-copy">Copy</button>' +
+            '<button class="btn btn-sm" id="batch-share">Share</button>' +
+            '<button class="btn btn-sm" id="batch-tag">Tag</button>' +
             '<button class="btn btn-sm btn-danger" id="batch-delete">Delete</button>' +
             '<button class="btn btn-sm btn-outline" id="batch-visibility">Visibility</button>' +
             '<button class="btn btn-sm btn-outline" id="batch-deselect">Deselect All</button>';
 
         document.getElementById('batch-download').addEventListener('click', batchDownload);
+        document.getElementById('batch-move').addEventListener('click', function() { showFolderPicker('move'); });
+        document.getElementById('batch-copy').addEventListener('click', function() { showFolderPicker('copy'); });
+        document.getElementById('batch-share').addEventListener('click', batchShareModal);
+        document.getElementById('batch-tag').addEventListener('click', batchTagModal);
         document.getElementById('batch-delete').addEventListener('click', batchDelete);
         document.getElementById('batch-visibility').addEventListener('click', batchVisibility);
         document.getElementById('batch-deselect').addEventListener('click', function() {
@@ -153,6 +164,7 @@ function renderBrowser() {
 
         var html = '<table class="responsive-table"><thead><tr>' +
             '<th class="cb-col"><input type="checkbox" id="select-all-cb"></th>' +
+            '<th class="fav-col"></th>' +
             '<th class="sortable" data-sort="name">Name' + sortIndicator('name') + '</th>' +
             '<th></th>' +
             '<th class="sortable" data-sort="size">Size' + sortIndicator('size') + '</th>' +
@@ -184,9 +196,11 @@ function renderBrowser() {
             }
 
             var isSelected = !!selectedPaths[f.path];
+            var isFav = !!userFavorites[f.path];
 
             html += '<tr class="file-row' + (isSelected ? ' selected' : '') + '" data-path="' + esc(f.path) + '" data-isdir="' + (f.is_dir ? '1' : '0') + '" data-vis="' + esc(f.visibility || 'public') + '" data-idx="' + i + '">' +
                 '<td class="cb-col"><input type="checkbox" class="row-checkbox"' + (isSelected ? ' checked' : '') + '></td>' +
+                '<td class="fav-col"><button class="fav-btn' + (isFav ? ' fav-active' : '') + '" data-fav="' + esc(f.path) + '" title="' + (isFav ? 'Unstar' : 'Star') + '">' + (isFav ? '&#9733;' : '&#9734;') + '</button></td>' +
                 '<td data-label="Name">' + nameLink + '</td>' +
                 '<td data-label="">' + visBadge + '</td>' +
                 '<td data-label="Size">' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
@@ -224,6 +238,34 @@ function renderBrowser() {
                 var vis = row.getAttribute('data-vis');
                 var rect = btn.getBoundingClientRect();
                 showKebabMenu(path, isDir, vis, rect.right, rect.bottom);
+            });
+        });
+
+        // Wire favorite buttons
+        table.querySelectorAll('.fav-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var path = btn.getAttribute('data-fav');
+                var isFav = !!userFavorites[path];
+                if (isFav) {
+                    API.del('/api/v1/favorites/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(resp) {
+                        if (resp.ok) {
+                            delete userFavorites[path];
+                            btn.classList.remove('fav-active');
+                            btn.innerHTML = '&#9734;';
+                            btn.title = 'Star';
+                        }
+                    });
+                } else {
+                    API.put('/api/v1/favorites/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(resp) {
+                        if (resp.ok) {
+                            userFavorites[path] = true;
+                            btn.classList.add('fav-active');
+                            btn.innerHTML = '&#9733;';
+                            btn.title = 'Unstar';
+                        }
+                    });
+                }
             });
         });
 
@@ -391,7 +433,7 @@ function renderBrowser() {
             if (!confirm('Delete ' + path + '?')) return;
             API.del('/api/v1/tree/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(resp) {
                 if (resp.ok) {
-                    Toast.success('Deleted ' + path.split('/').pop());
+                    Toast.info('Moved to Trash');
                     loadDir(currentPath);
                 } else {
                     resp.json().then(function(d) { Toast.error(d.error || 'Delete failed'); });
@@ -515,7 +557,7 @@ function renderBrowser() {
                     if (errors.length > 0) {
                         Toast.error('Failed to delete: ' + errors.join(', '));
                     } else {
-                        Toast.success('Deleted ' + paths.length + ' item(s)');
+                        Toast.info('Moved ' + paths.length + ' item(s) to Trash');
                     }
                     clearSelection();
                     loadDir(currentPath);
@@ -695,6 +737,25 @@ function renderBrowser() {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
         dropZone.classList.add('hidden');
+
+        // Check for directory entries
+        var items = e.dataTransfer.items;
+        if (items && items.length > 0 && items[0].webkitGetAsEntry) {
+            var entries = [];
+            for (var i = 0; i < items.length; i++) {
+                var entry = items[i].webkitGetAsEntry();
+                if (entry) entries.push(entry);
+            }
+            // Check if any entry is a directory
+            var hasDir = entries.some(function(ent) { return ent.isDirectory; });
+            if (hasDir) {
+                collectFolderFiles(entries).then(function(fileList) {
+                    if (fileList.length > 0) uploadFolderFiles(fileList);
+                });
+                return;
+            }
+        }
+
         if (e.dataTransfer.files.length > 0) {
             uploadFiles(e.dataTransfer.files);
         }
@@ -731,6 +792,158 @@ function renderBrowser() {
                 });
             })(files[i]);
         }
+    }
+
+    // Folder upload button
+    document.getElementById('btn-upload-folder').addEventListener('click', function() {
+        document.getElementById('folder-input').click();
+    });
+
+    document.getElementById('folder-input').addEventListener('change', function() {
+        var folderInput = document.getElementById('folder-input');
+        var files = folderInput.files;
+        if (!files || files.length === 0) return;
+
+        var fileList = [];
+        for (var i = 0; i < files.length; i++) {
+            fileList.push({
+                file: files[i],
+                relativePath: files[i].webkitRelativePath || files[i].name
+            });
+        }
+        uploadFolderFiles(fileList);
+        folderInput.value = '';
+    });
+
+    // Collect files from dropped directory entries recursively
+    function collectFolderFiles(entries) {
+        var allFiles = [];
+        var promises = [];
+
+        function readEntry(entry, basePath) {
+            return new Promise(function(resolve) {
+                if (entry.isFile) {
+                    entry.file(function(file) {
+                        allFiles.push({ file: file, relativePath: basePath + file.name });
+                        resolve();
+                    }, function() { resolve(); });
+                } else if (entry.isDirectory) {
+                    var reader = entry.createReader();
+                    readAllEntries(reader, basePath + entry.name + '/').then(resolve);
+                } else {
+                    resolve();
+                }
+            });
+        }
+
+        function readAllEntries(reader, basePath) {
+            return new Promise(function(resolve) {
+                var allEntries = [];
+                function readBatch() {
+                    reader.readEntries(function(batch) {
+                        if (batch.length === 0) {
+                            var ps = allEntries.map(function(e) { return readEntry(e, basePath); });
+                            Promise.all(ps).then(resolve);
+                        } else {
+                            allEntries = allEntries.concat(Array.from(batch));
+                            readBatch();
+                        }
+                    }, function() { resolve(); });
+                }
+                readBatch();
+            });
+        }
+
+        for (var i = 0; i < entries.length; i++) {
+            promises.push(readEntry(entries[i], ''));
+        }
+
+        return Promise.all(promises).then(function() { return allFiles; });
+    }
+
+    // Upload folder files with progress modal
+    function uploadFolderFiles(fileList) {
+        if (fileList.length === 0) return;
+
+        // Collect unique directory paths
+        var dirs = {};
+        for (var i = 0; i < fileList.length; i++) {
+            var parts = fileList[i].relativePath.split('/');
+            var dirPath = '';
+            for (var j = 0; j < parts.length - 1; j++) {
+                dirPath += (dirPath ? '/' : '') + parts[j];
+                dirs[dirPath] = true;
+            }
+        }
+
+        // Sort dirs by depth (shallowest first)
+        var dirList = Object.keys(dirs).sort(function(a, b) {
+            return a.split('/').length - b.split('/').length;
+        });
+
+        // Show progress modal
+        var progressDiv = document.createElement('div');
+        progressDiv.innerHTML =
+            '<div class="upload-progress">' +
+                '<p id="upload-progress-text">Preparing upload...</p>' +
+                '<div class="progress-bar-wrap"><div class="progress-bar" id="upload-progress-bar"></div></div>' +
+                '<p id="upload-progress-count">0 / ' + fileList.length + ' files</p>' +
+                '<div id="upload-errors" class="upload-errors"></div>' +
+            '</div>';
+        Modal.open({ title: 'Uploading Folder', content: progressDiv });
+
+        var completed = 0;
+        var errors = [];
+
+        // Create directories first, then upload files
+        var dirPromise = Promise.resolve();
+        for (var d = 0; d < dirList.length; d++) {
+            (function(dirPath) {
+                dirPromise = dirPromise.then(function() {
+                    var fullDirPath = (currentPath === '/' ? '' : currentPath) + '/' + dirPath;
+                    return API.put('/api/v1/tree/' + API.encodeURIPath(fullDirPath.replace(/^\//, '')) + '?type=dir');
+                });
+            })(dirList[d]);
+        }
+
+        dirPromise.then(function() {
+            // Upload files sequentially
+            var uploadPromise = Promise.resolve();
+            for (var fi = 0; fi < fileList.length; fi++) {
+                (function(fileEntry) {
+                    uploadPromise = uploadPromise.then(function() {
+                        var filePath = (currentPath === '/' ? '' : currentPath) + '/' + fileEntry.relativePath;
+                        document.getElementById('upload-progress-text').textContent = 'Uploading: ' + fileEntry.relativePath;
+
+                        return API.upload(filePath.replace(/^\//, ''), fileEntry.file).then(function(resp) {
+                            completed++;
+                            if (!resp.ok) errors.push(fileEntry.relativePath);
+                            var pct = Math.round((completed / fileList.length) * 100);
+                            document.getElementById('upload-progress-bar').style.width = pct + '%';
+                            document.getElementById('upload-progress-count').textContent =
+                                completed + ' / ' + fileList.length + ' files';
+                        }).catch(function() {
+                            completed++;
+                            errors.push(fileEntry.relativePath);
+                            var pct = Math.round((completed / fileList.length) * 100);
+                            document.getElementById('upload-progress-bar').style.width = pct + '%';
+                            document.getElementById('upload-progress-count').textContent =
+                                completed + ' / ' + fileList.length + ' files';
+                        });
+                    });
+                })(fileList[fi]);
+            }
+
+            return uploadPromise;
+        }).then(function() {
+            Modal.close();
+            if (errors.length > 0) {
+                Toast.error('Failed to upload ' + errors.length + ' file(s)');
+            } else {
+                Toast.success('Folder uploaded: ' + fileList.length + ' file(s)');
+            }
+            loadDir(currentPath);
+        });
     }
 
     // Global search
@@ -866,6 +1079,206 @@ function renderBrowser() {
         return esc(text.substring(0, idx)) +
             '<mark>' + esc(text.substring(idx, idx + query.length)) + '</mark>' +
             esc(text.substring(idx + query.length));
+    }
+
+    // ── Folder Picker Modal (Move / Copy) ──────────────────────────────────
+
+    function showFolderPicker(mode) {
+        var paths = getSelectedPaths();
+        if (paths.length === 0) return;
+
+        var contentDiv = document.createElement('div');
+        contentDiv.innerHTML =
+            '<p style="margin-bottom:0.75rem">' + (mode === 'move' ? 'Move' : 'Copy') + ' ' + paths.length + ' item(s) to:</p>' +
+            '<div class="folder-picker-tree" id="folder-picker-tree">Loading...</div>' +
+            '<div style="margin-top:0.75rem">' +
+                '<button class="btn" id="folder-picker-confirm" disabled>' + (mode === 'move' ? 'Move Here' : 'Copy Here') + '</button>' +
+            '</div>';
+
+        Modal.open({ title: (mode === 'move' ? 'Move' : 'Copy') + ' to Folder', content: contentDiv });
+
+        var selectedDest = null;
+
+        API.get('/api/v1/tree').then(function(data) {
+            if (!data.root) return;
+            var tree = document.getElementById('folder-picker-tree');
+            tree.innerHTML = '';
+            renderPickerNode(data.root, tree, 0);
+        });
+
+        function renderPickerNode(node, container, depth) {
+            if (!node.is_dir && node.path !== '/') return;
+
+            var item = document.createElement('div');
+            item.className = 'folder-picker-item';
+            item.style.paddingLeft = (depth * 16 + 8) + 'px';
+            item.textContent = node.path === '/' ? '/ (root)' : node.name;
+            item.setAttribute('data-path', node.path);
+
+            item.addEventListener('click', function() {
+                container.querySelectorAll('.folder-picker-item').forEach(function(el) {
+                    el.classList.remove('selected');
+                });
+                item.classList.add('selected');
+                selectedDest = node.path;
+                document.getElementById('folder-picker-confirm').disabled = false;
+            });
+
+            container.appendChild(item);
+
+            if (node.children) {
+                for (var i = 0; i < node.children.length; i++) {
+                    if (node.children[i].is_dir) {
+                        renderPickerNode(node.children[i], container, depth + 1);
+                    }
+                }
+            }
+        }
+
+        document.getElementById('folder-picker-confirm').addEventListener('click', function() {
+            if (!selectedDest) return;
+            Modal.close();
+
+            var endpoint = mode === 'move' ? '/api/v1/bulk/move' : '/api/v1/bulk/copy';
+            API.post(endpoint, { paths: paths, destination: selectedDest }).then(function(resp) {
+                return resp.json();
+            }).then(function(data) {
+                if (data.failed > 0) {
+                    Toast.error((data.errors || []).join(', ') || 'Some items failed');
+                } else {
+                    Toast.success((mode === 'move' ? 'Moved' : 'Copied') + ' ' + data.succeeded + ' item(s)');
+                }
+                clearSelection();
+                loadDir(currentPath);
+            }).catch(function() {
+                Toast.error(mode + ' failed');
+            });
+        });
+    }
+
+    // ── Batch Share Modal ──────────────────────────────────────────────────
+
+    function batchShareModal() {
+        var paths = getSelectedPaths();
+        if (paths.length === 0) return;
+
+        var contentDiv = document.createElement('div');
+        contentDiv.innerHTML =
+            '<p style="margin-bottom:0.75rem">Create share links for ' + paths.length + ' item(s):</p>' +
+            '<form id="batch-share-form">' +
+                '<div class="form-group">' +
+                    '<label>Password (optional)</label>' +
+                    '<input type="text" id="batch-share-password" placeholder="Leave empty for no password">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Expires in (seconds, optional)</label>' +
+                    '<input type="number" id="batch-share-expiry" placeholder="e.g. 86400 for 1 day">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Max downloads (optional)</label>' +
+                    '<input type="number" id="batch-share-maxdl" placeholder="0 = unlimited">' +
+                '</div>' +
+                '<button type="submit" class="btn">Create Share Links</button>' +
+            '</form>';
+
+        Modal.open({ title: 'Batch Share', content: contentDiv });
+
+        document.getElementById('batch-share-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var body = { paths: paths };
+            var pw = document.getElementById('batch-share-password').value;
+            var exp = document.getElementById('batch-share-expiry').value;
+            var maxDl = document.getElementById('batch-share-maxdl').value;
+            if (pw) body.password = pw;
+            if (exp) body.expires_in_sec = parseInt(exp, 10);
+            if (maxDl) body.max_downloads = parseInt(maxDl, 10);
+
+            Modal.close();
+
+            API.post('/api/v1/bulk/share', body).then(function(resp) {
+                return resp.json();
+            }).then(function(data) {
+                if (data.failed > 0) {
+                    Toast.error('Failed for some items: ' + (data.errors || []).join(', '));
+                } else {
+                    Toast.success('Created ' + data.succeeded + ' share link(s)');
+                }
+                clearSelection();
+            }).catch(function() {
+                Toast.error('Batch share failed');
+            });
+        });
+    }
+
+    // ── Batch Tag Modal ─────────────────────────────────────────────────────
+
+    function batchTagModal() {
+        var paths = getSelectedPaths();
+        if (paths.length === 0) return;
+
+        var contentDiv = document.createElement('div');
+        contentDiv.innerHTML =
+            '<p style="margin-bottom:0.75rem">Add tags to ' + paths.length + ' item(s):</p>' +
+            '<form id="batch-tag-form">' +
+                '<div class="form-group">' +
+                    '<label>Tags (comma-separated)</label>' +
+                    '<input type="text" id="batch-tag-input" placeholder="e.g. vacation, family, 2025">' +
+                '</div>' +
+                '<div id="tag-suggestions" class="tag-suggestions"></div>' +
+                '<button type="submit" class="btn" style="margin-top:0.5rem">Apply Tags</button>' +
+            '</form>';
+
+        Modal.open({ title: 'Batch Tag', content: contentDiv });
+
+        // Load existing tags for suggestions
+        API.get('/api/v1/gallery/tags').then(function(tags) {
+            if (!tags || tags.length === 0) return;
+            var sugDiv = document.getElementById('tag-suggestions');
+            var html = '';
+            for (var i = 0; i < Math.min(tags.length, 20); i++) {
+                html += '<button type="button" class="tag-suggestion-pill" data-tag="' + esc(tags[i].tag) + '">' +
+                    esc(tags[i].tag) + '</button>';
+            }
+            sugDiv.innerHTML = html;
+            sugDiv.querySelectorAll('.tag-suggestion-pill').forEach(function(pill) {
+                pill.addEventListener('click', function() {
+                    var tagInput = document.getElementById('batch-tag-input');
+                    var current = tagInput.value.trim();
+                    var tag = pill.getAttribute('data-tag');
+                    if (current) {
+                        tagInput.value = current + ', ' + tag;
+                    } else {
+                        tagInput.value = tag;
+                    }
+                });
+            });
+        });
+
+        document.getElementById('batch-tag-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var tagStr = document.getElementById('batch-tag-input').value.trim();
+            if (!tagStr) {
+                Toast.error('Enter at least one tag');
+                return;
+            }
+            var tags = tagStr.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+            if (tags.length === 0) return;
+
+            Modal.close();
+
+            API.post('/api/v1/bulk/tag', { paths: paths, tags: tags }).then(function(resp) {
+                return resp.json();
+            }).then(function(data) {
+                if (data.failed > 0) {
+                    Toast.error('Some tags failed: ' + (data.errors || []).join(', '));
+                } else {
+                    Toast.success('Applied ' + tags.length + ' tag(s) to ' + paths.length + ' item(s)');
+                }
+                clearSelection();
+            }).catch(function() {
+                Toast.error('Batch tag failed');
+            });
+        });
     }
 
     // Visibility modal
@@ -1082,7 +1495,23 @@ function renderBrowser() {
     function loadDir(path) {
         buildBreadcrumb(path);
         var apiPath = path === '/' ? '/api/v1/tree' : '/api/v1/tree/' + API.encodeURIPath(path.replace(/^\//, ''));
-        API.get(apiPath).then(function(data) {
+
+        // Fetch favorites and directory in parallel
+        Promise.all([
+            API.get(apiPath),
+            API.get('/api/v1/favorites/paths')
+        ]).then(function(results) {
+            var data = results[0];
+            var favPaths = results[1];
+
+            // Build favorites map
+            userFavorites = {};
+            if (Array.isArray(favPaths)) {
+                for (var i = 0; i < favPaths.length; i++) {
+                    userFavorites[favPaths[i]] = true;
+                }
+            }
+
             if (data.error) {
                 document.getElementById('file-table').innerHTML =
                     '<div class="alert alert-error">' + esc(data.error) + '</div>';
@@ -1098,4 +1527,78 @@ function renderBrowser() {
     }
 
     loadDir(currentPath);
+}
+
+function renderFavorites() {
+    var app = document.getElementById('app');
+    app.innerHTML =
+        '<div class="toolbar">' +
+            '<h2>Favorites</h2>' +
+        '</div>' +
+        '<div id="favorites-table" class="table-wrap">' +
+            '<div style="padding:0.75rem">' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+                '<div class="skeleton skeleton-row"></div>' +
+            '</div>' +
+        '</div>';
+
+    API.get('/api/v1/favorites').then(function(items) {
+        var table = document.getElementById('favorites-table');
+
+        if (!items || items.length === 0) {
+            table.innerHTML =
+                '<div class="empty-state">' +
+                    '<span class="empty-icon">&#11088;</span>' +
+                    '<p>No favorites yet</p>' +
+                    '<p class="empty-hint">Star files in the file browser to add them here</p>' +
+                '</div>';
+            return;
+        }
+
+        var html = '<table class="responsive-table"><thead><tr>' +
+            '<th>Name</th>' +
+            '<th>Path</th>' +
+            '<th>Size</th>' +
+            '<th>Modified</th>' +
+            '<th></th>' +
+            '</tr></thead><tbody>';
+
+        for (var i = 0; i < items.length; i++) {
+            var f = items[i];
+            var iconHtml = FileTypes.icon(f.file_name || f.file_path.split('/').pop(), f.is_dir);
+            var href = f.is_dir ? '#browser' + f.file_path : '#viewer' + f.file_path;
+            var displayName = f.file_name || f.file_path.split('/').pop();
+
+            html += '<tr class="file-row">' +
+                '<td data-label="Name"><a class="file-name" href="' + esc(href) + '">' +
+                    iconHtml + esc(displayName) + '</a></td>' +
+                '<td data-label="Path" class="search-path"><code>' + esc(f.file_path) + '</code></td>' +
+                '<td data-label="Size">' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
+                '<td data-label="Modified">' + formatDate(f.mod_time) + '</td>' +
+                '<td data-label="">' +
+                    '<button class="btn btn-sm btn-outline" data-unfav="' + esc(f.file_path) + '" title="Remove favorite">&#9733;</button>' +
+                '</td>' +
+                '</tr>';
+        }
+
+        html += '</tbody></table>';
+        table.innerHTML = html;
+
+        // Wire unstar buttons
+        table.querySelectorAll('[data-unfav]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var path = btn.getAttribute('data-unfav');
+                API.del('/api/v1/favorites/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(resp) {
+                    if (resp.ok) {
+                        Toast.info('Removed from favorites');
+                        renderFavorites();
+                    }
+                });
+            });
+        });
+    }).catch(function() {
+        document.getElementById('favorites-table').innerHTML =
+            '<div class="alert alert-error">Failed to load favorites</div>';
+    });
 }

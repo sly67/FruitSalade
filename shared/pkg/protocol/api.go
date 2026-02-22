@@ -410,6 +410,83 @@ type TagRequest struct {
 	Tag string `json:"tag"`
 }
 
+// ─── Trash Types ────────────────────────────────────────────────────────────
+
+// TrashItem represents a soft-deleted file in the trash.
+type TrashItem struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	OriginalPath  string    `json:"original_path"`
+	Size          int64     `json:"size"`
+	IsDir         bool      `json:"is_dir"`
+	DeletedAt     time.Time `json:"deleted_at"`
+	DeletedByName string    `json:"deleted_by_name,omitempty"`
+}
+
+// TrashRestoreRequest is the body for POST /api/v1/trash/restore.
+type TrashRestoreRequest struct {
+	Path string `json:"path"`
+}
+
+// ─── Favorites Types ────────────────────────────────────────────────────────
+
+// FavoriteItem represents a user's bookmarked file.
+type FavoriteItem struct {
+	FilePath string    `json:"file_path"`
+	FileName string    `json:"file_name"`
+	Size     int64     `json:"size"`
+	IsDir    bool      `json:"is_dir"`
+	ModTime  time.Time `json:"mod_time,omitempty"`
+}
+
+// ─── Search Types ───────────────────────────────────────────────────────────
+
+// SearchResult represents a file search result.
+type SearchResult struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	IsDir   bool      `json:"is_dir"`
+	ModTime time.Time `json:"mod_time"`
+	Tags    []string  `json:"tags,omitempty"`
+}
+
+// ─── Bulk Operation Types ───────────────────────────────────────────────────
+
+// BulkMoveRequest is the body for POST /api/v1/bulk/move.
+type BulkMoveRequest struct {
+	Paths       []string `json:"paths"`
+	Destination string   `json:"destination"`
+}
+
+// BulkCopyRequest is the body for POST /api/v1/bulk/copy.
+type BulkCopyRequest struct {
+	Paths       []string `json:"paths"`
+	Destination string   `json:"destination"`
+}
+
+// BulkShareRequest is the body for POST /api/v1/bulk/share.
+type BulkShareRequest struct {
+	Paths        []string `json:"paths"`
+	Password     string   `json:"password,omitempty"`
+	ExpiresInSec int64    `json:"expires_in_sec,omitempty"`
+	MaxDownloads int      `json:"max_downloads,omitempty"`
+}
+
+// BulkTagRequest is the body for POST /api/v1/bulk/tag.
+type BulkTagRequest struct {
+	Paths []string `json:"paths"`
+	Tags  []string `json:"tags"`
+}
+
+// BulkResponse is the response for bulk operations.
+type BulkResponse struct {
+	Succeeded int      `json:"succeeded"`
+	Failed    int      `json:"failed"`
+	Errors    []string `json:"errors,omitempty"`
+}
+
 // AlbumRequest is the body for POST/PUT /api/v1/gallery/albums.
 type AlbumRequest struct {
 	Name        string `json:"name"`

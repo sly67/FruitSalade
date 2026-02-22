@@ -3,6 +3,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"os"
@@ -106,7 +107,7 @@ func (s *Store) BuildTree(ctx context.Context) (*models.FileNode, error) {
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id, storage_location_id
-		 FROM files ORDER BY path`)
+		 FROM files WHERE deleted_at IS NULL ORDER BY path`)
 	if err != nil {
 		return nil, fmt.Errorf("query files: %w", err)
 	}
@@ -255,7 +256,7 @@ func (s *Store) ListDir(ctx context.Context, path string) ([]*models.FileNode, e
 	path = normalizePath(path)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key
-		 FROM files WHERE parent_path = $1 ORDER BY name`, path)
+		 FROM files WHERE parent_path = $1 AND deleted_at IS NULL ORDER BY name`, path)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -378,7 +379,7 @@ func (s *Store) FileCount(ctx context.Context) (int64, error) {
 	defer func() { metrics.RecordDBQuery("file_count", time.Since(start)) }()
 
 	var count int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&count)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files WHERE deleted_at IS NULL`).Scan(&count)
 	return count, err
 }
 
@@ -554,7 +555,7 @@ func (s *Store) ListVersionedFiles(ctx context.Context) ([]VersionedFileSummary,
 		        COALESCE(MAX(fv.created_at), f.mod_time) AS latest_change
 		 FROM files f
 		 JOIN file_versions fv ON fv.path = f.path
-		 WHERE f.is_dir = FALSE
+		 WHERE f.is_dir = FALSE AND f.deleted_at IS NULL
 		 GROUP BY f.path, f.name, f.version, f.size, f.mod_time
 		 ORDER BY latest_change DESC`)
 	if err != nil {
@@ -571,6 +572,437 @@ func (s *Store) ListVersionedFiles(ctx context.Context) ([]VersionedFileSummary,
 		results = append(results, v)
 	}
 	return results, rows.Err()
+}
+
+// ─── Trash (Soft Delete) ─────────────────────────────────────────────────────
+
+// TrashRow holds a trashed file's information.
+type TrashRow struct {
+	ID            string
+	Name          string
+	OriginalPath  string
+	Size          int64
+	IsDir         bool
+	DeletedAt     time.Time
+	DeletedByName string
+}
+
+// SoftDeleteFile marks a file (or directory tree) as deleted.
+func (s *Store) SoftDeleteFile(ctx context.Context, path string, userID int) error {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("soft_delete_file", time.Since(start)) }()
+
+	path = normalizePath(path)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE files SET deleted_at = NOW(), deleted_by = $2, original_path = path
+		 WHERE (path = $1 OR path LIKE $1 || '/%') AND deleted_at IS NULL`,
+		path, userID)
+	if err != nil {
+		return fmt.Errorf("soft delete: %w", err)
+	}
+	logging.Debug("soft-deleted file", zap.String("path", path), zap.Int("user_id", userID))
+	return nil
+}
+
+// ListTrash returns all soft-deleted files. If userID is non-nil, filters by deleted_by.
+func (s *Store) ListTrash(ctx context.Context, userID *int) ([]TrashRow, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("list_trash", time.Since(start)) }()
+
+	var query string
+	var args []interface{}
+	if userID != nil {
+		query = `SELECT f.id, f.name, f.original_path, f.size, f.is_dir, f.deleted_at,
+		         COALESCE(u.username, '') AS deleted_by_name
+		         FROM files f LEFT JOIN users u ON u.id = f.deleted_by
+		         WHERE f.deleted_at IS NOT NULL AND f.deleted_by = $1
+		         ORDER BY f.deleted_at DESC`
+		args = []interface{}{*userID}
+	} else {
+		query = `SELECT f.id, f.name, f.original_path, f.size, f.is_dir, f.deleted_at,
+		         COALESCE(u.username, '') AS deleted_by_name
+		         FROM files f LEFT JOIN users u ON u.id = f.deleted_by
+		         WHERE f.deleted_at IS NOT NULL
+		         ORDER BY f.deleted_at DESC`
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list trash: %w", err)
+	}
+	defer rows.Close()
+
+	var items []TrashRow
+	for rows.Next() {
+		var t TrashRow
+		if err := rows.Scan(&t.ID, &t.Name, &t.OriginalPath, &t.Size, &t.IsDir,
+			&t.DeletedAt, &t.DeletedByName); err != nil {
+			return nil, fmt.Errorf("scan trash: %w", err)
+		}
+		items = append(items, t)
+	}
+	return items, rows.Err()
+}
+
+// RestoreFile restores a soft-deleted file by its original path.
+func (s *Store) RestoreFile(ctx context.Context, originalPath string) error {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("restore_file", time.Since(start)) }()
+
+	originalPath = normalizePath(originalPath)
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE files SET deleted_at = NULL, deleted_by = NULL
+		 WHERE original_path = $1 AND deleted_at IS NOT NULL`,
+		originalPath)
+	if err != nil {
+		return fmt.Errorf("restore file: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("not found in trash: %s", originalPath)
+	}
+	logging.Debug("restored file", zap.String("path", originalPath), zap.Int64("rows", rows))
+	return nil
+}
+
+// PurgeFileRow holds info needed to clean up storage after purge.
+type PurgeFileRow struct {
+	S3Key        string
+	StorageLocID *int
+	GroupID      *int
+}
+
+// PurgeFile permanently deletes a trashed file. Returns storage info for cleanup.
+func (s *Store) PurgeFile(ctx context.Context, originalPath string) ([]PurgeFileRow, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("purge_file", time.Since(start)) }()
+
+	originalPath = normalizePath(originalPath)
+	rows, err := s.db.QueryContext(ctx,
+		`DELETE FROM files WHERE original_path = $1 AND deleted_at IS NOT NULL
+		 RETURNING s3_key, storage_location_id, group_id`,
+		originalPath)
+	if err != nil {
+		return nil, fmt.Errorf("purge file: %w", err)
+	}
+	defer rows.Close()
+
+	var purged []PurgeFileRow
+	for rows.Next() {
+		var p PurgeFileRow
+		var slid, gid sql.NullInt64
+		if err := rows.Scan(&p.S3Key, &slid, &gid); err != nil {
+			return nil, fmt.Errorf("scan purge: %w", err)
+		}
+		if slid.Valid {
+			id := int(slid.Int64)
+			p.StorageLocID = &id
+		}
+		if gid.Valid {
+			id := int(gid.Int64)
+			p.GroupID = &id
+		}
+		purged = append(purged, p)
+	}
+	return purged, rows.Err()
+}
+
+// PurgeAllTrash permanently deletes all trashed files. Returns storage info for cleanup.
+func (s *Store) PurgeAllTrash(ctx context.Context) ([]PurgeFileRow, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("purge_all_trash", time.Since(start)) }()
+
+	rows, err := s.db.QueryContext(ctx,
+		`DELETE FROM files WHERE deleted_at IS NOT NULL
+		 RETURNING s3_key, storage_location_id, group_id`)
+	if err != nil {
+		return nil, fmt.Errorf("purge all trash: %w", err)
+	}
+	defer rows.Close()
+
+	var purged []PurgeFileRow
+	for rows.Next() {
+		var p PurgeFileRow
+		var slid, gid sql.NullInt64
+		if err := rows.Scan(&p.S3Key, &slid, &gid); err != nil {
+			return nil, fmt.Errorf("scan purge: %w", err)
+		}
+		if slid.Valid {
+			id := int(slid.Int64)
+			p.StorageLocID = &id
+		}
+		if gid.Valid {
+			id := int(gid.Int64)
+			p.GroupID = &id
+		}
+		purged = append(purged, p)
+	}
+	return purged, rows.Err()
+}
+
+// PurgeExpiredTrash permanently deletes trash items older than maxAge. Returns storage info.
+func (s *Store) PurgeExpiredTrash(ctx context.Context, maxAge time.Duration) ([]PurgeFileRow, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("purge_expired_trash", time.Since(start)) }()
+
+	cutoff := time.Now().Add(-maxAge)
+	rows, err := s.db.QueryContext(ctx,
+		`DELETE FROM files WHERE deleted_at IS NOT NULL AND deleted_at < $1
+		 RETURNING s3_key, storage_location_id, group_id`, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("purge expired trash: %w", err)
+	}
+	defer rows.Close()
+
+	var purged []PurgeFileRow
+	for rows.Next() {
+		var p PurgeFileRow
+		var slid, gid sql.NullInt64
+		if err := rows.Scan(&p.S3Key, &slid, &gid); err != nil {
+			return nil, fmt.Errorf("scan purge: %w", err)
+		}
+		if slid.Valid {
+			id := int(slid.Int64)
+			p.StorageLocID = &id
+		}
+		if gid.Valid {
+			id := int(gid.Int64)
+			p.GroupID = &id
+		}
+		purged = append(purged, p)
+	}
+	return purged, rows.Err()
+}
+
+// ─── Favorites ───────────────────────────────────────────────────────────────
+
+// AddFavorite adds a file to the user's favorites.
+func (s *Store) AddFavorite(ctx context.Context, userID int, filePath string) error {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("add_favorite", time.Since(start)) }()
+
+	filePath = normalizePath(filePath)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO user_favorites (user_id, file_path) VALUES ($1, $2)
+		 ON CONFLICT (user_id, file_path) DO NOTHING`,
+		userID, filePath)
+	if err != nil {
+		return fmt.Errorf("add favorite: %w", err)
+	}
+	return nil
+}
+
+// RemoveFavorite removes a file from the user's favorites.
+func (s *Store) RemoveFavorite(ctx context.Context, userID int, filePath string) error {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("remove_favorite", time.Since(start)) }()
+
+	filePath = normalizePath(filePath)
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM user_favorites WHERE user_id = $1 AND file_path = $2`,
+		userID, filePath)
+	if err != nil {
+		return fmt.Errorf("remove favorite: %w", err)
+	}
+	return nil
+}
+
+// FavoriteRow holds favorite info joined with file metadata.
+type FavoriteRow struct {
+	FilePath string
+	FileName string
+	Size     int64
+	IsDir    bool
+	ModTime  time.Time
+}
+
+// ListFavorites returns all favorites for a user, joined with file metadata.
+func (s *Store) ListFavorites(ctx context.Context, userID int) ([]FavoriteRow, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("list_favorites", time.Since(start)) }()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT uf.file_path, COALESCE(f.name, ''), COALESCE(f.size, 0),
+		        COALESCE(f.is_dir, FALSE), COALESCE(f.mod_time, NOW())
+		 FROM user_favorites uf
+		 LEFT JOIN files f ON f.path = uf.file_path AND f.deleted_at IS NULL
+		 WHERE uf.user_id = $1
+		 ORDER BY uf.created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list favorites: %w", err)
+	}
+	defer rows.Close()
+
+	var items []FavoriteRow
+	for rows.Next() {
+		var f FavoriteRow
+		if err := rows.Scan(&f.FilePath, &f.FileName, &f.Size, &f.IsDir, &f.ModTime); err != nil {
+			return nil, fmt.Errorf("scan favorite: %w", err)
+		}
+		items = append(items, f)
+	}
+	return items, rows.Err()
+}
+
+// ListFavoritePaths returns just the paths of a user's favorites (for star rendering).
+func (s *Store) ListFavoritePaths(ctx context.Context, userID int) ([]string, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("list_favorite_paths", time.Since(start)) }()
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT file_path FROM user_favorites WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list favorite paths: %w", err)
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan favorite path: %w", err)
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
+// ─── Search ──────────────────────────────────────────────────────────────────
+
+// SearchResultRow holds a file search result.
+type SearchResultRow struct {
+	ID      string
+	Name    string
+	Path    string
+	Size    int64
+	IsDir   bool
+	ModTime time.Time
+	Tags    []string
+}
+
+// SearchFiles searches files by name, path, or tags.
+func (s *Store) SearchFiles(ctx context.Context, query, typeFilter string, limit int) ([]SearchResultRow, error) {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("search_files", time.Since(start)) }()
+
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+
+	baseQuery := `SELECT DISTINCT f.id, f.name, f.path, f.size, f.is_dir, f.mod_time
+	              FROM files f
+	              LEFT JOIN image_tags it ON it.file_path = f.path
+	              WHERE f.deleted_at IS NULL
+	              AND (f.name ILIKE '%' || $1 || '%' OR f.path ILIKE '%' || $1 || '%' OR it.tag ILIKE '%' || $1 || '%')`
+
+	switch typeFilter {
+	case "files":
+		baseQuery += ` AND NOT f.is_dir`
+	case "dirs":
+		baseQuery += ` AND f.is_dir`
+	case "images":
+		baseQuery += ` AND lower(f.name) ~ '\.(jpg|jpeg|png|gif|webp|bmp|svg)$'`
+	}
+
+	baseQuery += ` ORDER BY f.mod_time DESC LIMIT $2`
+
+	rows, err := s.db.QueryContext(ctx, baseQuery, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search files: %w", err)
+	}
+	defer rows.Close()
+
+	var results []SearchResultRow
+	for rows.Next() {
+		var r SearchResultRow
+		if err := rows.Scan(&r.ID, &r.Name, &r.Path, &r.Size, &r.IsDir, &r.ModTime); err != nil {
+			return nil, fmt.Errorf("scan search: %w", err)
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// ─── Move & Copy ─────────────────────────────────────────────────────────────
+
+// MoveFile moves a file or directory to a new path, updating children paths for directories.
+func (s *Store) MoveFile(ctx context.Context, oldPath, newPath string) error {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("move_file", time.Since(start)) }()
+
+	oldPath = normalizePath(oldPath)
+	newPath = normalizePath(newPath)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	newParent := filepath.Dir(newPath)
+	if newParent == "." {
+		newParent = "/"
+	}
+	newName := filepath.Base(newPath)
+
+	// Update the file/directory itself
+	_, err = tx.ExecContext(ctx,
+		`UPDATE files SET path = $1, parent_path = $2, name = $3, id = $4, updated_at = NOW()
+		 WHERE path = $5 AND deleted_at IS NULL`,
+		newPath, newParent, newName, fileID(newPath), oldPath)
+	if err != nil {
+		return fmt.Errorf("move file: %w", err)
+	}
+
+	// Update all children paths (for directories)
+	_, err = tx.ExecContext(ctx,
+		`UPDATE files SET
+		   path = $1 || substring(path from length($2) + 1),
+		   parent_path = CASE
+		     WHEN parent_path = $2 THEN $1
+		     ELSE $1 || substring(parent_path from length($2) + 1)
+		   END,
+		   id = encode(sha256(($1 || substring(path from length($2) + 1))::bytea), 'hex')::varchar(16),
+		   updated_at = NOW()
+		 WHERE path LIKE $2 || '/%' AND deleted_at IS NULL`,
+		newPath, oldPath)
+	if err != nil {
+		return fmt.Errorf("move children: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// CopyFileRow copies a file's metadata to a new path (does not copy storage objects).
+func (s *Store) CopyFileRow(ctx context.Context, srcPath, dstPath string) error {
+	start := time.Now()
+	defer func() { metrics.RecordDBQuery("copy_file_row", time.Since(start)) }()
+
+	srcPath = normalizePath(srcPath)
+	dstPath = normalizePath(dstPath)
+
+	dstParent := filepath.Dir(dstPath)
+	if dstParent == "." {
+		dstParent = "/"
+	}
+	dstName := filepath.Base(dstPath)
+	dstS3Key := strings.TrimPrefix(dstPath, "/")
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO files (id, name, path, parent_path, size, mod_time, is_dir, hash, s3_key, version, owner_id, visibility, group_id, storage_location_id, created_at, updated_at)
+		 SELECT $1, $2, $3, $4, size, NOW(), is_dir, hash, $5, 1, owner_id, visibility, group_id, storage_location_id, NOW(), NOW()
+		 FROM files WHERE path = $6 AND deleted_at IS NULL
+		 ON CONFLICT (path) DO NOTHING`,
+		fileID(dstPath), dstName, dstPath, dstParent, dstS3Key, srcPath)
+	if err != nil {
+		return fmt.Errorf("copy file: %w", err)
+	}
+	return nil
+}
+
+func fileID(path string) string {
+	h := sha256.Sum256([]byte(path))
+	return fmt.Sprintf("%x", h[:8])
 }
 
 func normalizePath(path string) string {

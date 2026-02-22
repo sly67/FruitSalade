@@ -271,6 +271,37 @@ func main() {
 		}
 	}()
 
+	// Start periodic trash auto-purge (30-day retention)
+	go func() {
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				purged, err := metaStore.PurgeExpiredTrash(ctx, 30*24*time.Hour)
+				if err != nil {
+					logging.Error("trash auto-purge failed", zap.Error(err))
+					continue
+				}
+				if len(purged) > 0 {
+					for _, p := range purged {
+						if p.S3Key == "" {
+							continue
+						}
+						backend, _, err := storageRouter.ResolveForFile(ctx, p.StorageLocID, p.GroupID)
+						if err == nil && backend != nil {
+							backend.DeleteObject(ctx, p.S3Key)
+						}
+					}
+					srv.RefreshTree(ctx)
+					logging.Info("trash auto-purge completed", zap.Int("purged", len(purged)))
+				}
+			}
+		}
+	}()
+
 	if useTLS {
 		logging.Info("server listening (TLS 1.3)",
 			zap.String("addr", cfg.ListenAddr),
