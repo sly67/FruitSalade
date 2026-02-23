@@ -17,7 +17,8 @@
         'share':            renderShareDownload,
         'trash':            renderTrash,
         'search':           renderSearch,
-        'favorites':        renderFavorites
+        'favorites':        renderFavorites,
+        'help':             renderHelp
     };
 
     // Admin-only routes
@@ -167,7 +168,7 @@
         }
         // Highlight More tab if current route is an admin/more route
         var moreTab = document.getElementById('tab-more');
-        var moreRoutes = ['shares', 'trash', 'favorites', 'search', 'users', 'groups', 'storage', 'gallery-plugins', 'admin-shares', 'settings'];
+        var moreRoutes = ['shares', 'trash', 'favorites', 'search', 'help', 'users', 'groups', 'storage', 'gallery-plugins', 'admin-shares', 'settings'];
         if (moreRoutes.indexOf(route) !== -1) {
             moreTab.classList.add('active');
         } else {
@@ -194,7 +195,8 @@
             { route: 'favorites', icon: '&#11088;', label: 'Favorites' },
             { route: 'shares', icon: '&#128279;', label: 'My Shares' },
             { route: 'trash', icon: '&#128465;', label: 'Trash' },
-            { route: 'search', icon: '&#128269;', label: 'Search' }
+            { route: 'search', icon: '&#128269;', label: 'Search' },
+            { route: 'help', icon: '&#10067;', label: 'Help' }
         ];
 
         if (isAdmin()) {
