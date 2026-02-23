@@ -14,6 +14,10 @@ var HELP_CATEGORIES = [
     { id: 'clients',         label: 'Clients' },
     { id: 'admin',           label: 'Admin' },
     { id: 'docker',          label: 'Docker' },
+    { id: 'shortcuts',       label: 'Shortcuts' },
+    { id: 'webdav',          label: 'WebDAV' },
+    { id: 'monitoring',      label: 'Monitoring' },
+    { id: 'troubleshooting', label: 'Troubleshooting' },
     { id: 'api-reference',   label: 'API Reference' },
     { id: 'credits',         label: 'Credits' }
 ];
@@ -791,6 +795,428 @@ var HELP_ARTICLES = [
                 '<tr><td><code>/health</code></td><td>Health check</td></tr>' +
                 '<tr><td><code>/metrics</code></td><td>Prometheus metrics</td></tr>' +
             '</table>'
+    },
+
+    // ── Keyboard Shortcuts ─────────────────────────────────────────────
+    {
+        id: 'shortcuts-global',
+        category: 'shortcuts',
+        title: 'Global Shortcuts',
+        body:
+            '<p>These shortcuts work from anywhere in the app:</p>' +
+            '<table>' +
+                '<tr><th>Shortcut</th><th>Action</th></tr>' +
+                '<tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Focus global search bar</td></tr>' +
+                '<tr><td><kbd>Cmd</kbd>+<kbd>K</kbd></td><td>Focus global search bar (macOS)</td></tr>' +
+                '<tr><td><kbd>Escape</kbd></td><td>Close any open modal or overlay</td></tr>' +
+            '</table>'
+    },
+    {
+        id: 'shortcuts-browser',
+        category: 'shortcuts',
+        title: 'File Browser',
+        body:
+            '<p>Shortcuts available in the file browser view:</p>' +
+            '<table>' +
+                '<tr><th>Shortcut</th><th>Action</th></tr>' +
+                '<tr><td><kbd>Enter</kbd></td><td>Confirm rename when editing a file or folder name</td></tr>' +
+                '<tr><td><kbd>Escape</kbd></td><td>Cancel rename and revert to original name</td></tr>' +
+            '</table>'
+    },
+    {
+        id: 'shortcuts-gallery',
+        category: 'shortcuts',
+        title: 'Gallery &amp; Lightbox',
+        body:
+            '<p>Shortcuts for the gallery lightbox (fullscreen photo viewer):</p>' +
+            '<table>' +
+                '<tr><th>Shortcut</th><th>Action</th></tr>' +
+                '<tr><td><kbd>&larr;</kbd> Arrow Left</td><td>Previous photo</td></tr>' +
+                '<tr><td><kbd>&rarr;</kbd> Arrow Right</td><td>Next photo</td></tr>' +
+                '<tr><td><kbd>Escape</kbd></td><td>Close the lightbox</td></tr>' +
+                '<tr><td><kbd>Enter</kbd></td><td>Submit tag in the tag input field</td></tr>' +
+            '</table>' +
+            '<div class="wiki-tip">On touch devices, swipe left/right to navigate between photos.</div>'
+    },
+    {
+        id: 'shortcuts-conflicts',
+        category: 'shortcuts',
+        title: 'Conflict Viewer',
+        body:
+            '<p>Shortcuts in the fullscreen conflict comparison overlay:</p>' +
+            '<table>' +
+                '<tr><th>Shortcut</th><th>Action</th></tr>' +
+                '<tr><td><kbd>&larr;</kbd> Arrow Left</td><td>Previous conflict</td></tr>' +
+                '<tr><td><kbd>&rarr;</kbd> Arrow Right</td><td>Next conflict</td></tr>' +
+                '<tr><td><kbd>Escape</kbd></td><td>Close the comparison overlay</td></tr>' +
+            '</table>'
+    },
+    {
+        id: 'shortcuts-search',
+        category: 'shortcuts',
+        title: 'Search',
+        body:
+            '<p>Shortcuts on the search page:</p>' +
+            '<table>' +
+                '<tr><th>Shortcut</th><th>Action</th></tr>' +
+                '<tr><td><kbd>Enter</kbd></td><td>Execute search query</td></tr>' +
+            '</table>' +
+            '<p>The search input auto-focuses when you navigate to the search page.</p>'
+    },
+
+    // ── WebDAV ───────────────────────────────────────────────────────────
+    {
+        id: 'webdav-overview',
+        category: 'webdav',
+        title: 'WebDAV Overview',
+        body:
+            '<p>FruitSalade exposes a WebDAV endpoint at <code>/webdav</code>, allowing you to mount your files as a network drive from any WebDAV-compatible client.</p>' +
+            '<h4>Supported Operations</h4>' +
+            '<table>' +
+                '<tr><th>WebDAV Method</th><th>Description</th></tr>' +
+                '<tr><td><code>GET</code> / <code>PUT</code></td><td>Download and upload files</td></tr>' +
+                '<tr><td><code>MKCOL</code></td><td>Create directories</td></tr>' +
+                '<tr><td><code>DELETE</code></td><td>Delete files and directories</td></tr>' +
+                '<tr><td><code>MOVE</code> / <code>COPY</code></td><td>Rename, move, or copy files</td></tr>' +
+                '<tr><td><code>PROPFIND</code></td><td>List directory contents and file properties</td></tr>' +
+                '<tr><td><code>LOCK</code> / <code>UNLOCK</code></td><td>In-memory file locking for concurrent editing</td></tr>' +
+            '</table>' +
+            '<div class="wiki-note">WebDAV writes go through the same storage router as the API, so multi-backend storage and versioning are fully supported.</div>'
+    },
+    {
+        id: 'webdav-auth',
+        category: 'webdav',
+        title: 'Authentication',
+        body:
+            '<p>The WebDAV endpoint supports two authentication methods:</p>' +
+            '<h4>HTTP Basic Auth</h4>' +
+            '<p>Most WebDAV clients use Basic Auth. Provide your FruitSalade username and password when prompted.</p>' +
+            '<pre>https://your-server:48000/webdav</pre>' +
+            '<h4>Bearer Token</h4>' +
+            '<p>Programmatic clients can pass a JWT token via the <code>Authorization</code> header:</p>' +
+            '<pre>Authorization: Bearer &lt;token&gt;</pre>' +
+            '<div class="wiki-warning">Basic Auth sends credentials in base64 (not encrypted). Always use HTTPS when connecting via WebDAV.</div>'
+    },
+    {
+        id: 'webdav-clients',
+        category: 'webdav',
+        title: 'Client Setup',
+        body:
+            '<h4>Windows (Map Network Drive)</h4>' +
+            '<ol>' +
+                '<li>Open File Explorer &rarr; right-click "This PC" &rarr; "Map network drive"</li>' +
+                '<li>Enter: <code>https://your-server:48000/webdav</code></li>' +
+                '<li>Check "Connect using different credentials"</li>' +
+                '<li>Enter your FruitSalade username and password</li>' +
+            '</ol>' +
+            '<h4>macOS (Finder)</h4>' +
+            '<ol>' +
+                '<li>Finder &rarr; Go &rarr; Connect to Server (<kbd>Cmd</kbd>+<kbd>K</kbd>)</li>' +
+                '<li>Enter: <code>https://your-server:48000/webdav</code></li>' +
+                '<li>Authenticate with your credentials</li>' +
+            '</ol>' +
+            '<h4>Linux (GNOME Files / Nautilus)</h4>' +
+            '<ol>' +
+                '<li>Open Files &rarr; Other Locations</li>' +
+                '<li>Enter: <code>davs://your-server:48000/webdav</code></li>' +
+                '<li>Enter your credentials</li>' +
+            '</ol>' +
+            '<h4>Command Line (curl)</h4>' +
+            '<pre># List files\ncurl -u admin:admin https://your-server:48000/webdav/ -X PROPFIND\n\n# Upload a file\ncurl -u admin:admin -T myfile.txt https://your-server:48000/webdav/myfile.txt\n\n# Download a file\ncurl -u admin:admin -o output.txt https://your-server:48000/webdav/myfile.txt</pre>' +
+            '<div class="wiki-tip">For the best experience with large file collections, use the native FUSE or Windows client instead of WebDAV. They support on-demand placeholders and local caching.</div>'
+    },
+    {
+        id: 'webdav-limitations',
+        category: 'webdav',
+        title: 'Limitations',
+        body:
+            '<p>WebDAV is a convenient fallback but has trade-offs compared to the native clients:</p>' +
+            '<ul>' +
+                '<li><strong>No placeholders</strong> &mdash; all files appear as fully downloaded; no on-demand hydration</li>' +
+                '<li><strong>No local cache</strong> &mdash; every read hits the server (no LRU cache or pinning)</li>' +
+                '<li><strong>Performance</strong> &mdash; listing large directories can be slow due to PROPFIND overhead</li>' +
+                '<li><strong>Locking</strong> &mdash; locks are in-memory only and lost on server restart</li>' +
+            '</ul>' +
+            '<p>For these reasons, the FUSE client (Linux) or CfAPI client (Windows) are recommended for daily use.</p>'
+    },
+
+    // ── Monitoring ───────────────────────────────────────────────────────
+    {
+        id: 'monitoring-overview',
+        category: 'monitoring',
+        title: 'Monitoring Overview',
+        body:
+            '<p>FruitSalade exports Prometheus metrics and includes a pre-built Grafana dashboard for real-time monitoring.</p>' +
+            '<h4>Endpoints</h4>' +
+            '<table>' +
+                '<tr><th>Endpoint</th><th>Description</th></tr>' +
+                '<tr><td><code>/metrics</code></td><td>Prometheus metrics (port 9090 in Docker)</td></tr>' +
+                '<tr><td><code>/health</code></td><td>Health check (returns 200 when server is ready)</td></tr>' +
+            '</table>'
+    },
+    {
+        id: 'monitoring-metrics',
+        category: 'monitoring',
+        title: 'Prometheus Metrics',
+        body:
+            '<p>Key metrics exported by FruitSalade:</p>' +
+            '<h4>HTTP</h4>' +
+            '<table>' +
+                '<tr><th>Metric</th><th>Type</th><th>Description</th></tr>' +
+                '<tr><td><code>fruitsalade_http_requests_total</code></td><td>Counter</td><td>Total HTTP requests by method, path, status</td></tr>' +
+                '<tr><td><code>fruitsalade_http_request_duration_seconds</code></td><td>Histogram</td><td>Request latency (p50/p95/p99)</td></tr>' +
+            '</table>' +
+            '<h4>Content Transfer</h4>' +
+            '<table>' +
+                '<tr><th>Metric</th><th>Type</th><th>Description</th></tr>' +
+                '<tr><td><code>fruitsalade_content_bytes_downloaded_total</code></td><td>Counter</td><td>Total bytes downloaded</td></tr>' +
+                '<tr><td><code>fruitsalade_content_bytes_uploaded_total</code></td><td>Counter</td><td>Total bytes uploaded</td></tr>' +
+                '<tr><td><code>fruitsalade_content_downloads_total</code></td><td>Counter</td><td>Download count by status</td></tr>' +
+                '<tr><td><code>fruitsalade_content_uploads_total</code></td><td>Counter</td><td>Upload count by status</td></tr>' +
+            '</table>' +
+            '<h4>Storage &amp; Database</h4>' +
+            '<table>' +
+                '<tr><th>Metric</th><th>Type</th><th>Description</th></tr>' +
+                '<tr><td><code>fruitsalade_metadata_tree_size</code></td><td>Gauge</td><td>Number of entries in the file tree</td></tr>' +
+                '<tr><td><code>fruitsalade_db_connections_open</code></td><td>Gauge</td><td>Open PostgreSQL connections</td></tr>' +
+                '<tr><td><code>fruitsalade_db_query_duration_seconds</code></td><td>Histogram</td><td>Database query latency</td></tr>' +
+                '<tr><td><code>fruitsalade_s3_operation_duration_seconds</code></td><td>Histogram</td><td>S3 operation latency by type</td></tr>' +
+                '<tr><td><code>fruitsalade_s3_operations_total</code></td><td>Counter</td><td>S3 operations by type and status</td></tr>' +
+            '</table>' +
+            '<h4>Auth &amp; Rate Limiting</h4>' +
+            '<table>' +
+                '<tr><th>Metric</th><th>Type</th><th>Description</th></tr>' +
+                '<tr><td><code>fruitsalade_auth_attempts_total</code></td><td>Counter</td><td>Login attempts (success/failure)</td></tr>' +
+                '<tr><td><code>fruitsalade_active_tokens</code></td><td>Gauge</td><td>Currently active JWT tokens</td></tr>' +
+                '<tr><td><code>fruitsalade_rate_limit_hits_total</code></td><td>Counter</td><td>Rate limit rejections (HTTP 429)</td></tr>' +
+                '<tr><td><code>fruitsalade_quota_exceeded_total</code></td><td>Counter</td><td>Quota exceeded events</td></tr>' +
+            '</table>' +
+            '<h4>Real-time &amp; Sharing</h4>' +
+            '<table>' +
+                '<tr><th>Metric</th><th>Type</th><th>Description</th></tr>' +
+                '<tr><td><code>fruitsalade_sse_connections_active</code></td><td>Gauge</td><td>Active SSE connections</td></tr>' +
+                '<tr><td><code>fruitsalade_sse_events_total</code></td><td>Counter</td><td>SSE events sent by type</td></tr>' +
+                '<tr><td><code>fruitsalade_share_links_active</code></td><td>Gauge</td><td>Active share links</td></tr>' +
+                '<tr><td><code>fruitsalade_share_downloads_total</code></td><td>Counter</td><td>Share link downloads</td></tr>' +
+                '<tr><td><code>fruitsalade_permission_checks_total</code></td><td>Counter</td><td>Permission checks (allowed/denied)</td></tr>' +
+            '</table>'
+    },
+    {
+        id: 'monitoring-grafana',
+        category: 'monitoring',
+        title: 'Grafana Dashboard',
+        body:
+            '<p>A pre-built Grafana dashboard is included at <code>deploy/grafana-dashboard.json</code>.</p>' +
+            '<h4>Import Steps</h4>' +
+            '<ol>' +
+                '<li>Open Grafana &rarr; Dashboards &rarr; Import</li>' +
+                '<li>Upload <code>grafana-dashboard.json</code> or paste its contents</li>' +
+                '<li>Select your Prometheus data source</li>' +
+                '<li>Click Import</li>' +
+            '</ol>' +
+            '<h4>Dashboard Panels</h4>' +
+            '<table>' +
+                '<tr><th>Section</th><th>Panels</th></tr>' +
+                '<tr><td><strong>Overview</strong></td><td>Request rate by method, error rate (4xx/5xx), latency percentiles (p50/p95/p99), top 10 endpoints by rate and latency</td></tr>' +
+                '<tr><td><strong>Content</strong></td><td>Download/upload throughput (Bps), operation rates by status, cumulative totals</td></tr>' +
+                '<tr><td><strong>Storage</strong></td><td>Metadata tree size, DB connections, S3 operation latency, S3 error rate, SSE connections, SSE event rate</td></tr>' +
+                '<tr><td><strong>Auth</strong></td><td>Login success/failure rate, active tokens, rate limit hits, quota exceeded events</td></tr>' +
+                '<tr><td><strong>Sharing</strong></td><td>Active share links, share download rate, permission check rate</td></tr>' +
+                '<tr><td><strong>Database</strong></td><td>Query latency percentiles, query rate by type, S3 latency by operation</td></tr>' +
+            '</table>' +
+            '<div class="wiki-tip">The dashboard auto-refreshes every 30 seconds and defaults to a 1-hour time range.</div>'
+    },
+    {
+        id: 'monitoring-prometheus',
+        category: 'monitoring',
+        title: 'Prometheus Setup',
+        body:
+            '<p>Add FruitSalade as a scrape target in your <code>prometheus.yml</code>:</p>' +
+            '<pre>scrape_configs:\n  - job_name: fruitsalade\n    scrape_interval: 15s\n    static_configs:\n      - targets: [\'your-server:9090\']</pre>' +
+            '<div class="wiki-note">In Docker Compose, the metrics port is mapped to <code>48001</code> on the host. Use <code>localhost:48001</code> if Prometheus runs on the same machine.</div>' +
+            '<h4>Alerting Examples</h4>' +
+            '<p>Useful PromQL alert rules:</p>' +
+            '<pre># High error rate (>5% of requests are 5xx)\nrate(fruitsalade_http_requests_total{status=~"5.."}[5m])\n  / rate(fruitsalade_http_requests_total[5m]) > 0.05\n\n# High request latency (p95 > 2s)\nhistogram_quantile(0.95,\n  rate(fruitsalade_http_request_duration_seconds_bucket[5m])\n) > 2\n\n# S3 errors\nrate(fruitsalade_s3_operations_total{status="error"}[5m]) > 0</pre>'
+    },
+    {
+        id: 'monitoring-systemd',
+        category: 'monitoring',
+        title: 'Systemd Services',
+        body:
+            '<p>For bare-metal deployments, systemd service files are provided in <code>deploy/</code>:</p>' +
+            '<h4>Server</h4>' +
+            '<pre># Install\nsudo cp deploy/fruitsalade-server.service /etc/systemd/system/\nsudo systemctl daemon-reload\nsudo systemctl enable --now fruitsalade-server</pre>' +
+            '<h4>FUSE Client (per-user)</h4>' +
+            '<pre># Install (template unit)\nsudo cp deploy/fruitsalade-fuse@.service /etc/systemd/system/\nsudo systemctl daemon-reload\n\n# Start for user "alice"\nsudo systemctl enable --now fruitsalade-fuse@alice</pre>' +
+            '<div class="wiki-note">The FUSE client uses a template unit (<code>@.service</code>) so each user gets an isolated mount with their own credentials.</div>'
+    },
+
+    // ── Troubleshooting ──────────────────────────────────────────────────
+    {
+        id: 'troubleshoot-login',
+        category: 'troubleshooting',
+        title: 'Login Issues',
+        body:
+            '<h4>Wrong credentials</h4>' +
+            '<p>The default admin account is <code>admin</code> / <code>admin</code>. If the password was changed and forgotten, an admin must reset it via the Users page or directly in the database.</p>' +
+            '<h4>Token expired</h4>' +
+            '<p>JWT tokens have a finite lifetime. If you see a 401 error, the app will automatically redirect you to the login page. Simply log in again.</p>' +
+            '<h4>2FA locked out</h4>' +
+            '<p>If you lost access to your authenticator app:</p>' +
+            '<ol>' +
+                '<li>Use one of your <span class="wiki-link" data-wiki-link="backup-codes">backup codes</span> to log in</li>' +
+                '<li>Disable 2FA from the Dashboard Security section</li>' +
+                '<li>Re-enable 2FA with a new device</li>' +
+            '</ol>' +
+            '<div class="wiki-warning">If you have no backup codes and no authenticator access, ask an admin to disable 2FA for your account directly in the database.</div>'
+    },
+    {
+        id: 'troubleshoot-upload',
+        category: 'troubleshooting',
+        title: 'Upload Problems',
+        body:
+            '<h4>File too large</h4>' +
+            '<p>The server rejects uploads exceeding <code>MAX_UPLOAD_SIZE</code> (default 100 MB). Ask your admin to increase this value.</p>' +
+            '<h4>Quota exceeded</h4>' +
+            '<p>If your storage quota is reached, you will see a 413 or 403 error. Free up space by deleting files or emptying the trash, or ask an admin to increase your quota.</p>' +
+            '<h4>Upload stalls or fails</h4>' +
+            '<ul>' +
+                '<li>Check your network connection</li>' +
+                '<li>Try a smaller file to rule out timeout issues</li>' +
+                '<li>Check the browser console for error details</li>' +
+                '<li>Verify the storage backend is healthy (S3 reachable, disk space available)</li>' +
+            '</ul>'
+    },
+    {
+        id: 'troubleshoot-fuse',
+        category: 'troubleshooting',
+        title: 'FUSE Client Issues',
+        body:
+            '<h4>"Transport endpoint is not connected"</h4>' +
+            '<p>The FUSE mount was interrupted. Unmount and remount:</p>' +
+            '<pre>sudo umount /mnt/fruitsalade\n./bin/fruitsalade-fuse -server https://your-server:48000 -mount /mnt/fruitsalade</pre>' +
+            '<h4>"fusermount: permission denied"</h4>' +
+            '<p>Ensure your user is in the <code>fuse</code> group:</p>' +
+            '<pre>sudo usermod -aG fuse $USER\n# Log out and back in</pre>' +
+            '<h4>"fuse: device not found"</h4>' +
+            '<p>The FUSE kernel module is not loaded:</p>' +
+            '<pre>sudo modprobe fuse</pre>' +
+            '<h4>Files show 0 bytes</h4>' +
+            '<p>This is normal. FruitSalade uses on-demand placeholders. Files only download their content when you open them. Metadata (name, size, mtime) is always available via <code>ls -l</code>.</p>' +
+            '<h4>Slow directory listings</h4>' +
+            '<ul>' +
+                '<li>The first listing after mount fetches the metadata tree from the server</li>' +
+                '<li>Subsequent listings use the cached tree</li>' +
+                '<li>If still slow, check your network latency to the server</li>' +
+            '</ul>'
+    },
+    {
+        id: 'troubleshoot-sync',
+        category: 'troubleshooting',
+        title: 'Sync &amp; Conflict Issues',
+        body:
+            '<h4>Changes not appearing</h4>' +
+            '<ul>' +
+                '<li>Ensure SSE (Server-Sent Events) is connected &mdash; check the browser console for SSE connection messages</li>' +
+                '<li>Hard refresh the page (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>)</li>' +
+                '<li>FUSE clients periodically poll for metadata updates; wait a few seconds</li>' +
+            '</ul>' +
+            '<h4>Conflict files appearing</h4>' +
+            '<p>Conflicts occur when two clients edit the same file simultaneously. Go to <strong>File Management &rarr; Conflicts</strong> to resolve them.</p>' +
+            '<div class="wiki-note">Conflicts are detected via version headers. The server never silently overwrites &mdash; it always preserves both versions.</div>' +
+            '<h4>Version mismatch errors</h4>' +
+            '<p>If you see a 409 response when saving:</p>' +
+            '<ol>' +
+                '<li>Someone else modified the file since you opened it</li>' +
+                '<li>Reload the file to get the latest version</li>' +
+                '<li>Re-apply your changes and save again</li>' +
+            '</ol>'
+    },
+    {
+        id: 'troubleshoot-docker',
+        category: 'troubleshooting',
+        title: 'Docker Issues',
+        body:
+            '<h4>Server won\'t start</h4>' +
+            '<p>Check the logs:</p>' +
+            '<pre>make docker-logs</pre>' +
+            '<p>Common causes:</p>' +
+            '<ul>' +
+                '<li><strong>Port conflict</strong> &mdash; Another service is using port 48000. Check with <code>ss -tlnp | grep 48000</code></li>' +
+                '<li><strong>PostgreSQL init failure</strong> &mdash; Corrupt data volume. Run <code>make docker-down</code> (removes volumes) and <code>make docker-up</code></li>' +
+                '<li><strong>S3/MinIO unreachable</strong> &mdash; Ensure the MinIO container is healthy before the server starts</li>' +
+            '</ul>' +
+            '<h4>DOCKER_API_VERSION mismatch</h4>' +
+            '<p>If you see "client version X is too new" errors:</p>' +
+            '<pre>export DOCKER_API_VERSION=1.41</pre>' +
+            '<div class="wiki-note">This is common with Docker 20.10 and Compose v5. Set this variable in your shell profile.</div>' +
+            '<h4>FUSE clients crash in Docker</h4>' +
+            '<p>FUSE containers require:</p>' +
+            '<ul>' +
+                '<li><code>--cap-add SYS_ADMIN</code></li>' +
+                '<li><code>--device /dev/fuse</code></li>' +
+                '<li><code>--security-opt apparmor:unconfined</code> (on systems with AppArmor)</li>' +
+            '</ul>' +
+            '<p>If <code>/dev/fuse</code> doesn\'t exist on the host, the FUSE clients cannot run.</p>'
+    },
+    {
+        id: 'troubleshoot-storage',
+        category: 'troubleshooting',
+        title: 'Storage Backend Issues',
+        body:
+            '<h4>S3: "access denied" or "no such bucket"</h4>' +
+            '<ul>' +
+                '<li>Verify <code>S3_ACCESS_KEY</code>, <code>S3_SECRET_KEY</code>, and <code>S3_BUCKET</code> environment variables</li>' +
+                '<li>Ensure the bucket exists: <code>mc ls local/fruitsalade</code></li>' +
+                '<li>Check the MinIO console at <code>http://localhost:48003</code></li>' +
+            '</ul>' +
+            '<h4>Local: "permission denied"</h4>' +
+            '<p>The server process must have read/write access to <code>LOCAL_STORAGE_PATH</code> (default <code>/data/storage</code>):</p>' +
+            '<pre>sudo chown -R $(whoami) /data/storage</pre>' +
+            '<h4>SMB: mount failures</h4>' +
+            '<ul>' +
+                '<li>Ensure <code>cifs-utils</code> is installed on the server</li>' +
+                '<li>Verify network connectivity to the SMB share</li>' +
+                '<li>Check credentials and share permissions</li>' +
+            '</ul>' +
+            '<h4>Disk full</h4>' +
+            '<p>If uploads fail with I/O errors:</p>' +
+            '<ol>' +
+                '<li>Check disk usage: <code>df -h</code></li>' +
+                '<li>Empty the trash to reclaim space</li>' +
+                '<li>Delete old file versions if not needed</li>' +
+                '<li>Consider migrating to an S3 backend for elastic storage</li>' +
+            '</ol>'
+    },
+    {
+        id: 'troubleshoot-performance',
+        category: 'troubleshooting',
+        title: 'Performance Tips',
+        body:
+            '<h4>Slow page loads</h4>' +
+            '<ul>' +
+                '<li>Enable the service worker (PWA) for cached static assets</li>' +
+                '<li>Check the Prometheus dashboard for high request latencies</li>' +
+                '<li>Ensure PostgreSQL has enough memory and connections</li>' +
+            '</ul>' +
+            '<h4>Gallery slow to load</h4>' +
+            '<ul>' +
+                '<li>Thumbnails are generated on first access; subsequent loads use cached versions</li>' +
+                '<li>Large photo libraries benefit from the S3 backend with CDN caching</li>' +
+            '</ul>' +
+            '<h4>High database query latency</h4>' +
+            '<ul>' +
+                '<li>Monitor <code>fruitsalade_db_query_duration_seconds</code> in Grafana</li>' +
+                '<li>Large file trees (&gt;100k files) may need PostgreSQL tuning</li>' +
+                '<li>Ensure indexes exist on <code>path</code>, <code>parent_path</code>, and <code>id</code> columns</li>' +
+            '</ul>' +
+            '<h4>S3 latency</h4>' +
+            '<ul>' +
+                '<li>Use a regional endpoint close to your server</li>' +
+                '<li>For MinIO, deploy it on the same network as the server</li>' +
+                '<li>Monitor <code>fruitsalade_s3_operation_duration_seconds</code> for spikes</li>' +
+            '</ul>' +
+            '<div class="wiki-tip">The FUSE client\'s LRU cache significantly reduces repeated downloads. Pin frequently accessed files for instant offline access.</div>'
     },
 
     // ── Credits ──────────────────────────────────────────────────────────
