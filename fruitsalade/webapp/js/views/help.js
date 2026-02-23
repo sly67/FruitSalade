@@ -983,6 +983,34 @@ var HELP_ARTICLES = [
             '<h4>Web App Offline (PWA)</h4>' +
             '<p>The service worker caches the app shell, so the UI loads even offline. API calls will fail gracefully with a 503 "Offline" message. See <span class="wiki-link" data-wiki-link="pwa-overview">PWA</span> for details.</p>'
     },
+    {
+        id: 'sync-notifications',
+        category: 'sync',
+        title: 'Notification Center',
+        body:
+            '<p>The web app includes a real-time notification center powered by Server-Sent Events (SSE).</p>' +
+            '<h4>Bell Icon &amp; Badge</h4>' +
+            '<p>A bell icon in the top bar shows unread notification count as a red badge. Click to open the notification panel.</p>' +
+            '<h4>Toast Popups</h4>' +
+            '<p>When a file event occurs, a toast slides in from the top-right corner. Toasts are color-coded by event type:</p>' +
+            '<ul>' +
+                '<li><strong style="color:#16A34A">Green</strong> &mdash; File created</li>' +
+                '<li><strong style="color:#2563EB">Blue</strong> &mdash; File modified</li>' +
+                '<li><strong style="color:#EF4444">Red</strong> &mdash; File deleted</li>' +
+                '<li><strong style="color:#9333EA">Purple</strong> &mdash; New version</li>' +
+            '</ul>' +
+            '<p>Toasts auto-dismiss after 5 seconds. Click a toast to navigate to the affected file. Up to 3 toasts are visible at once.</p>' +
+            '<h4>Notification Panel</h4>' +
+            '<p>The dropdown panel lists the last 50 notifications with relative timestamps. Actions:</p>' +
+            '<ul>' +
+                '<li><strong>Mark all read</strong> &mdash; Clears the badge count</li>' +
+                '<li><strong>Clear all</strong> &mdash; Removes all notifications</li>' +
+                '<li><strong>Click a notification</strong> &mdash; Navigates to the file (or Trash for deleted files)</li>' +
+            '</ul>' +
+            '<p>Notifications are stored in memory only and reset on page reload or logout.</p>' +
+            '<h4>Accessibility</h4>' +
+            '<p>The notification panel includes ARIA attributes (<code>role="region"</code>, <code>aria-label</code>, <code>aria-expanded</code>) and toasts use <code>role="status"</code> with <code>aria-live="polite"</code> for screen reader compatibility.</p>'
+    },
 
     // ── Mobile & PWA ─────────────────────────────────────────────────────
     {
@@ -1187,6 +1215,29 @@ var HELP_ARTICLES = [
                 '<tr><td><kbd>Enter</kbd></td><td>Execute search query</td></tr>' +
             '</table>' +
             '<p>The search input auto-focuses when you navigate to the search page.</p>'
+    },
+    {
+        id: 'shortcuts-accessibility',
+        category: 'shortcuts',
+        title: 'Accessibility',
+        body:
+            '<p>FruitSalade includes comprehensive accessibility support for keyboard and screen reader users.</p>' +
+            '<h4>Keyboard Navigation</h4>' +
+            '<ul>' +
+                '<li><strong>Skip link</strong> &mdash; Press <kbd>Tab</kbd> on any page to reveal a "Skip to main content" link</li>' +
+                '<li><strong>Modal focus trap</strong> &mdash; When a dialog is open, <kbd>Tab</kbd> and <kbd>Shift+Tab</kbd> cycle within the modal. <kbd>Escape</kbd> closes it and restores focus to the triggering element.</li>' +
+                '<li><strong>Menu toggle</strong> &mdash; The user menu and notification panel update <code>aria-expanded</code> on open/close</li>' +
+            '</ul>' +
+            '<h4>ARIA Landmarks &amp; Roles</h4>' +
+            '<ul>' +
+                '<li><strong>Navigation</strong> &mdash; Sidebar, tab bar, and breadcrumb all have <code>aria-label</code></li>' +
+                '<li><strong>Tabs</strong> &mdash; Gallery, Dashboard, and File Management tabs use <code>role="tablist"</code> and <code>role="tab"</code> with <code>aria-selected</code></li>' +
+                '<li><strong>Dialogs</strong> &mdash; All modals have <code>role="dialog"</code>, <code>aria-modal="true"</code>, and <code>aria-labelledby</code></li>' +
+                '<li><strong>Active page</strong> &mdash; Sidebar links and breadcrumb mark the current page with <code>aria-current="page"</code></li>' +
+                '<li><strong>Tables</strong> &mdash; Column headers have <code>scope="col"</code></li>' +
+            '</ul>' +
+            '<h4>Live Regions</h4>' +
+            '<p>Toast notifications and the notification center use <code>role="status"</code> and <code>aria-live="polite"</code> so screen readers announce new messages without interrupting the user.</p>'
     },
 
     // ── WebDAV ───────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ function renderBrowser() {
                     '<button class="btn btn-sm btn-outline" id="btn-clear-search" style="display:none" title="Clear" aria-label="Clear search">&times;</button>' +
                 '</div>' +
                 '<button class="btn btn-sm" id="btn-new-folder">New Folder</button>' +
+                '<button class="btn btn-sm" id="btn-new-file">New File</button>' +
                 '<button class="btn btn-sm" id="btn-upload">Upload</button>' +
                 '<button class="btn btn-sm btn-outline" id="btn-upload-folder">Upload Folder</button>' +
                 '<input type="file" id="file-input" multiple style="display:none">' +
@@ -714,6 +715,78 @@ function renderBrowser() {
             });
     });
 
+    // New file
+    document.getElementById('btn-new-file').addEventListener('click', function() {
+        var contentDiv = document.createElement('div');
+        contentDiv.innerHTML =
+            '<form id="new-file-form">' +
+                '<div class="form-group">' +
+                    '<label for="new-file-name">File name</label>' +
+                    '<input type="text" id="new-file-name" placeholder="e.g. notes.md" required>' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>File type</label>' +
+                    '<div class="new-file-types">' +
+                        '<label class="vis-option"><input type="radio" name="ftype" value="empty" checked> Empty file</label>' +
+                        '<label class="vis-option"><input type="radio" name="ftype" value="text"> Text (.txt)</label>' +
+                        '<label class="vis-option"><input type="radio" name="ftype" value="markdown"> Markdown (.md)</label>' +
+                        '<label class="vis-option"><input type="radio" name="ftype" value="csv"> Spreadsheet (.csv)</label>' +
+                        '<label class="vis-option"><input type="radio" name="ftype" value="html"> Document (.html)</label>' +
+                    '</div>' +
+                '</div>' +
+                '<button type="submit" class="btn">Create</button>' +
+            '</form>';
+
+        Modal.open({ title: 'Create New File', content: contentDiv });
+
+        // Auto-fill extension on type change
+        var nameInput = document.getElementById('new-file-name');
+        var typeRadios = contentDiv.querySelectorAll('input[name="ftype"]');
+        var extMap = { empty: '', text: '.txt', markdown: '.md', csv: '.csv', html: '.html' };
+        typeRadios.forEach(function(radio) {
+            radio.addEventListener('change', function() {
+                var cur = nameInput.value.trim();
+                var dot = cur.lastIndexOf('.');
+                var base = dot > 0 ? cur.substring(0, dot) : (cur || 'untitled');
+                var ext = extMap[radio.value] || '';
+                nameInput.value = base + ext;
+            });
+        });
+
+        document.getElementById('new-file-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            var name = nameInput.value.trim();
+            if (!name) return;
+            var ftype = contentDiv.querySelector('input[name="ftype"]:checked').value;
+
+            var templates = {
+                empty: '',
+                text: '',
+                markdown: '# ' + name.replace(/\.md$/i, '') + '\n\n',
+                csv: 'Column A,Column B,Column C\n',
+                html: '<!DOCTYPE html>\n<html lang="en">\n<head>\n    <meta charset="UTF-8">\n    <title>' +
+                    name.replace(/\.html$/i, '') + '</title>\n</head>\n<body>\n    <h1>' +
+                    name.replace(/\.html$/i, '') + '</h1>\n    <p></p>\n</body>\n</html>\n'
+            };
+            var content = templates[ftype] || '';
+            var blob = new Blob([content], { type: 'text/plain' });
+
+            var filePath = (currentPath === '/' ? '' : currentPath) + '/' + name;
+            Modal.close();
+
+            API.upload(filePath.replace(/^\//, ''), blob).then(function(resp) {
+                if (resp.ok) {
+                    Toast.success('File created: ' + name);
+                    loadDir(currentPath);
+                } else {
+                    resp.json().then(function(d) { Toast.error(d.error || 'Failed to create file'); });
+                }
+            }).catch(function() {
+                Toast.error('Failed to create file');
+            });
+        });
+    });
+
     // Upload button
     document.getElementById('btn-upload').addEventListener('click', function() {
         fileInput.click();
@@ -724,22 +797,34 @@ function renderBrowser() {
         fileInput.value = '';
     });
 
-    // Drag and drop
-    var tableEl = document.getElementById('file-table');
-    tableEl.addEventListener('dragenter', function(e) {
+    // Drag and drop — use counter to handle nested dragenter/dragleave
+    var dragCounter = 0;
+    var browserArea = app;
+
+    browserArea.addEventListener('dragenter', function(e) {
         e.preventDefault();
-        dropZone.classList.remove('hidden');
-        dropZone.classList.add('drag-over');
+        dragCounter++;
+        if (dragCounter === 1) {
+            dropZone.classList.remove('hidden');
+            dropZone.classList.add('drag-over');
+        }
     });
-    dropZone.addEventListener('dragover', function(e) {
+    browserArea.addEventListener('dragover', function(e) {
         e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
     });
-    dropZone.addEventListener('dragleave', function(e) {
-        dropZone.classList.remove('drag-over');
-        dropZone.classList.add('hidden');
-    });
-    dropZone.addEventListener('drop', function(e) {
+    browserArea.addEventListener('dragleave', function(e) {
         e.preventDefault();
+        dragCounter--;
+        if (dragCounter <= 0) {
+            dragCounter = 0;
+            dropZone.classList.remove('drag-over');
+            dropZone.classList.add('hidden');
+        }
+    });
+    browserArea.addEventListener('drop', function(e) {
+        e.preventDefault();
+        dragCounter = 0;
         dropZone.classList.remove('drag-over');
         dropZone.classList.add('hidden');
 

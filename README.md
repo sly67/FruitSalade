@@ -18,7 +18,8 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **Multi-backend storage** -- S3/MinIO, local filesystem, and SMB backends with per-group storage locations
 - **File sharing** -- ACL-based permissions with path inheritance + share links (password, expiry, download limits)
 - **Rate limiting & quotas** -- per-user storage, bandwidth, RPM, and upload size limits
-- **Web app** -- embedded file browser and admin dashboard at `/app/` with dark mode, batch actions, user/group/storage management
+- **Web app** -- embedded file browser and admin dashboard at `/app/` with dark mode, batch actions, user/group/storage management, notification center, and WCAG accessibility
+- **Notification center** -- SSE-powered bell icon with color-coded toast popups, dropdown panel, click-to-navigate, mark-read/clear-all
 - **TLS/HTTPS** -- optional TLS 1.3 with certificate files
 - **OIDC authentication** -- federated login via Keycloak, Auth0, etc. with auto user provisioning
 - **Token management** -- revoke, refresh, and list active sessions per user
