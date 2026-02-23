@@ -1809,9 +1809,9 @@ function renderHelpCategory(catId) {
     // Setup scroll spy
     setupHelpScrollSpy(articles);
 
-    // Clear search
+    // Clear search only if search input is not focused (i.e. user clicked a tab, not typing)
     var searchInput = document.getElementById('help-search-input');
-    if (searchInput) searchInput.value = '';
+    if (searchInput && document.activeElement !== searchInput) searchInput.value = '';
 }
 
 // ── Search ───────────────────────────────────────────────────────────────
