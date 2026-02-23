@@ -4342,6 +4342,75 @@ mark {
 
 /* ─── Wiki / Help Page ─────────────────────────────────────────────────── */
 
+.wiki-outer {
+    display: flex;
+    gap: 0;
+    min-height: calc(100vh - var(--topbar-height) - 80px);
+}
+
+.wiki-cat-nav {
+    width: 200px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    position: sticky;
+    top: calc(var(--topbar-height));
+    max-height: calc(100vh - var(--topbar-height));
+    overflow-y: auto;
+    padding: 0.75rem 0;
+}
+
+.wiki-cat-toggle {
+    display: none;
+    width: 100%;
+    padding: 0.6rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.wiki-cat-toggle:hover {
+    border-color: var(--primary);
+}
+
+.wiki-cat-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.wiki-cat-link {
+    display: block;
+    padding: 0.45rem 1rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.wiki-cat-link:hover {
+    color: var(--primary);
+    background: var(--primary-light);
+}
+
+.wiki-cat-link.active {
+    color: var(--primary);
+    border-left-color: var(--primary);
+    background: var(--primary-light);
+    font-weight: 600;
+}
+
+.wiki-main {
+    flex: 1;
+    min-width: 0;
+}
+
 .wiki-layout {
     display: flex;
     gap: 1.5rem;
@@ -4596,6 +4665,42 @@ mark {
 /* ─── Wiki Mobile ──────────────────────────────────────────────────────── */
 
 @media (max-width: 768px) {
+    .wiki-outer {
+        flex-direction: column;
+    }
+
+    .wiki-cat-nav {
+        width: 100%;
+        position: static;
+        max-height: none;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 0.5rem;
+    }
+
+    .wiki-cat-toggle {
+        display: block;
+    }
+
+    .wiki-cat-list {
+        display: none;
+        padding-top: 0.5rem;
+    }
+
+    .wiki-cat-list.open {
+        display: flex;
+    }
+
+    .wiki-cat-link {
+        border-left: none;
+        border-radius: var(--radius-sm);
+        padding: 0.4rem 0.75rem;
+    }
+
+    .wiki-cat-link.active {
+        border-left-color: transparent;
+    }
+
     .wiki-layout {
         flex-direction: column;
         padding: 0.75rem;
@@ -4664,6 +4769,21 @@ mark {
 
 [data-theme="dark"] .wiki-article-body mark {
     background: rgba(245, 158, 11, 0.3);
+}
+
+/* ─── Wiki Dark Mode: Category Sidebar ─────────────────────────────────── */
+
+[data-theme="dark"] .wiki-cat-nav {
+    background: var(--surface);
+    border-right-color: var(--border);
+}
+
+[data-theme="dark"] .wiki-cat-link:hover {
+    background: rgba(37, 99, 235, 0.1);
+}
+
+[data-theme="dark"] .wiki-cat-link.active {
+    background: rgba(37, 99, 235, 0.12);
 }
 
 /* ─── Skip Link (Accessibility) ────────────────────────────────────────────── */

@@ -1718,11 +1718,11 @@ function renderHelp() {
 
 // ── Shell (toolbar + search + tabs + layout) ─────────────────────────────
 function buildHelpShell() {
-    var tabs = '';
+    var catLinks = '';
     for (var i = 0; i < HELP_CATEGORIES.length; i++) {
         var c = HELP_CATEGORIES[i];
-        tabs += '<button class="fm-tab' + (c.id === _helpActiveCategory ? ' active' : '') +
-            '" data-help-cat="' + c.id + '">' + c.label + '</button>';
+        catLinks += '<a class="wiki-cat-link' + (c.id === _helpActiveCategory ? ' active' : '') +
+            '" data-help-cat="' + c.id + '">' + c.label + '</a>';
     }
 
     return '' +
@@ -1733,13 +1733,20 @@ function buildHelpShell() {
                     'placeholder="Search documentation..." style="width:260px;max-width:100%">' +
             '</div>' +
         '</div>' +
-        '<div class="fm-tab-nav" id="help-tab-nav">' + tabs + '</div>' +
-        '<div class="wiki-layout" id="wiki-layout">' +
-            '<nav class="wiki-toc" id="wiki-toc">' +
-                '<button class="wiki-toc-toggle" id="wiki-toc-toggle">Table of Contents</button>' +
-                '<div class="wiki-toc-body" id="wiki-toc-body"></div>' +
+        '<div class="wiki-outer" id="wiki-outer">' +
+            '<nav class="wiki-cat-nav" id="help-tab-nav">' +
+                '<button class="wiki-cat-toggle" id="wiki-cat-toggle">Categories</button>' +
+                '<div class="wiki-cat-list" id="wiki-cat-list">' + catLinks + '</div>' +
             '</nav>' +
-            '<div class="wiki-content" id="wiki-content"></div>' +
+            '<div class="wiki-main">' +
+                '<div class="wiki-layout" id="wiki-layout">' +
+                    '<nav class="wiki-toc" id="wiki-toc">' +
+                        '<button class="wiki-toc-toggle" id="wiki-toc-toggle">Table of Contents</button>' +
+                        '<div class="wiki-toc-body" id="wiki-toc-body"></div>' +
+                    '</nav>' +
+                    '<div class="wiki-content" id="wiki-content"></div>' +
+                '</div>' +
+            '</div>' +
         '</div>';
 }
 
@@ -1747,13 +1754,13 @@ function buildHelpShell() {
 function renderHelpCategory(catId) {
     _helpActiveCategory = catId;
 
-    // Update tab highlight
-    var tabs = document.querySelectorAll('#help-tab-nav .fm-tab');
-    for (var i = 0; i < tabs.length; i++) {
-        if (tabs[i].getAttribute('data-help-cat') === catId) {
-            tabs[i].classList.add('active');
+    // Update category highlight
+    var catLinks = document.querySelectorAll('#help-tab-nav .wiki-cat-link');
+    for (var i = 0; i < catLinks.length; i++) {
+        if (catLinks[i].getAttribute('data-help-cat') === catId) {
+            catLinks[i].classList.add('active');
         } else {
-            tabs[i].classList.remove('active');
+            catLinks[i].classList.remove('active');
         }
     }
 
@@ -1881,9 +1888,9 @@ function renderHelpSearchResults(query) {
     }
     document.getElementById('wiki-content').innerHTML = html;
 
-    // Deactivate tabs
-    var tabs = document.querySelectorAll('#help-tab-nav .fm-tab');
-    for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+    // Deactivate category links
+    var catLinks = document.querySelectorAll('#help-tab-nav .wiki-cat-link');
+    for (var i = 0; i < catLinks.length; i++) catLinks[i].classList.remove('active');
 
     // Wire ToC links
     var tocLinks = document.querySelectorAll('#wiki-toc-body .wiki-toc-link');
@@ -1913,14 +1920,26 @@ function wireHelpTabs() {
     var nav = document.getElementById('help-tab-nav');
     if (!nav) return;
     nav.addEventListener('click', function(e) {
-        var btn = e.target.closest('.fm-tab');
-        if (!btn) return;
-        var catId = btn.getAttribute('data-help-cat');
+        var link = e.target.closest('.wiki-cat-link');
+        if (!link) return;
+        var catId = link.getAttribute('data-help-cat');
         if (catId) {
             document.getElementById('help-search-input').value = '';
             renderHelpCategory(catId);
+            // On mobile, close category list after selection
+            var catList = document.getElementById('wiki-cat-list');
+            if (catList && window.innerWidth <= 768) catList.classList.remove('open');
         }
     });
+
+    // Mobile category toggle
+    var catToggle = document.getElementById('wiki-cat-toggle');
+    if (catToggle) {
+        catToggle.addEventListener('click', function() {
+            var list = document.getElementById('wiki-cat-list');
+            list.classList.toggle('open');
+        });
+    }
 
     // Mobile ToC toggle
     var toggle = document.getElementById('wiki-toc-toggle');
