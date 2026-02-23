@@ -16,11 +16,11 @@ function renderDashboard() {
     var app = document.getElementById('app');
     var isAdmin = sessionStorage.getItem('is_admin') === 'true';
 
-    var tabNav = '<div class="fm-tab-nav">' +
-        '<button class="fm-tab active" data-dash-tab="overview">Overview</button>' +
-        '<button class="fm-tab" data-dash-tab="security">Security</button>';
+    var tabNav = '<div class="fm-tab-nav" role="tablist">' +
+        '<button class="fm-tab active" data-dash-tab="overview" role="tab" aria-selected="true">Overview</button>' +
+        '<button class="fm-tab" data-dash-tab="security" role="tab" aria-selected="false">Security</button>';
     if (isAdmin) {
-        tabNav += '<button class="fm-tab" data-dash-tab="analytics">Analytics</button>';
+        tabNav += '<button class="fm-tab" data-dash-tab="analytics" role="tab" aria-selected="false">Analytics</button>';
     }
     tabNav += '</div>';
 
@@ -36,8 +36,12 @@ function renderDashboard() {
             var target = tab.getAttribute('data-dash-tab');
             if (target === _activeTab) return;
             _activeTab = target;
-            tabs.forEach(function(t) { t.classList.remove('active'); });
+            tabs.forEach(function(t) {
+                t.classList.remove('active');
+                t.setAttribute('aria-selected', 'false');
+            });
             tab.classList.add('active');
+            tab.setAttribute('aria-selected', 'true');
             if (target === 'overview') renderOverviewTab();
             else if (target === 'security') renderSecurityTab();
             else if (target === 'analytics') renderAnalyticsTab();

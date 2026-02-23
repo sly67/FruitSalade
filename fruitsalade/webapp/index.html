@@ -16,17 +16,22 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
 </head>
 <body>
+    <a href="#app" class="skip-link">Skip to main content</a>
     <header id="topbar" class="hidden">
         <div class="topbar-brand">FruitSalade</div>
         <div class="topbar-search">
-            <input type="text" id="global-search" placeholder="Search files...">
+            <input type="text" id="global-search" placeholder="Search files..." aria-label="Search files">
+        </div>
+        <div class="topbar-notifications">
+            <button id="notif-bell-btn" aria-label="Notifications" aria-expanded="false">&#128276;<span id="notif-badge" class="notif-badge hidden">0</span></button>
+            <div id="notif-panel" class="notif-panel hidden" role="region" aria-label="Notifications"></div>
         </div>
         <div class="topbar-user">
-            <button id="user-menu-btn"><span id="topbar-username"></span> &#9662;</button>
-            <div id="user-dropdown" class="dropdown hidden">
-                <a href="#dashboard"><span class="dropdown-icon">&#128200;</span> Dashboard</a>
-                <a href="#" id="theme-toggle"><span class="dropdown-icon">&#127769;</span> Dark Mode</a>
-                <a href="#" id="topbar-logout"><span class="dropdown-icon">&#128682;</span> Logout</a>
+            <button id="user-menu-btn" aria-label="User menu" aria-expanded="false"><span id="topbar-username"></span> &#9662;</button>
+            <div id="user-dropdown" class="dropdown hidden" role="menu">
+                <a href="#dashboard" role="menuitem"><span class="dropdown-icon">&#128200;</span> Dashboard</a>
+                <a href="#" id="theme-toggle" role="menuitem"><span class="dropdown-icon">&#127769;</span> Dark Mode</a>
+                <a href="#" id="topbar-logout" role="menuitem"><span class="dropdown-icon">&#128682;</span> Logout</a>
             </div>
         </div>
     </header>
@@ -35,7 +40,7 @@
 
     <div id="layout" class="hidden">
         <aside id="sidebar">
-            <nav class="sidebar-nav">
+            <nav class="sidebar-nav" aria-label="Main navigation">
                 <a href="#browser" data-route="browser"><span class="nav-icon">&#128193;</span> Files</a>
                 <a href="#dashboard" data-route="dashboard"><span class="nav-icon">&#128200;</span> Dashboard</a>
                 <a href="#versions" data-route="versions"><span class="nav-icon">&#128338;</span> File Management</a>
@@ -60,7 +65,7 @@
         <aside id="detail-panel" class="hidden"></aside>
     </div>
 
-    <nav id="tab-bar" class="hidden">
+    <nav id="tab-bar" class="hidden" aria-label="Mobile navigation">
         <a href="#browser" data-route="browser"><span class="tab-icon">&#128193;</span><span class="tab-label">Files</span></a>
         <a href="#dashboard" data-route="dashboard"><span class="tab-icon">&#128200;</span><span class="tab-label">Dashboard</span></a>
         <a href="#versions" data-route="versions"><span class="tab-icon">&#128338;</span><span class="tab-label">File Mgmt</span></a>
@@ -70,6 +75,7 @@
 
     <script src="js/api.js"></script>
     <script src="js/utils.js"></script>
+    <script src="js/notifications.js"></script>
     <script src="js/views/login.js"></script>
     <script src="js/views/tree.js"></script>
     <script src="js/views/browser.js"></script>

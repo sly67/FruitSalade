@@ -53,8 +53,9 @@
             return;
         }
 
-        // Close more menu and detail panel on navigate
+        // Close more menu, notification panel, and detail panel on navigate
         closeMoreMenu();
+        Notifications.closePanel();
         var detailPanel = document.getElementById('detail-panel');
         if (detailPanel) {
             detailPanel.classList.remove('open');
@@ -95,6 +96,9 @@
             document.getElementById('topbar-username').textContent =
                 sessionStorage.getItem('username') || '';
 
+            // Connect notifications SSE if not already connected
+            Notifications.connect();
+
             // Show/hide admin sidebar section
             var adminSection = document.getElementById('sidebar-admin');
             if (adminSection) {
@@ -129,8 +133,10 @@
             var linkRoute = navLinks[i].getAttribute('data-route');
             if (linkRoute === route) {
                 navLinks[i].classList.add('active');
+                navLinks[i].setAttribute('aria-current', 'page');
             } else {
                 navLinks[i].classList.remove('active');
+                navLinks[i].removeAttribute('aria-current');
             }
         }
 
@@ -222,6 +228,7 @@
         document.getElementById('more-menu-logout').addEventListener('click', function(e) {
             e.preventDefault();
             closeMoreMenu();
+            Notifications.disconnect();
             API.clearToken();
             window.location.hash = '#login';
         });
@@ -248,17 +255,34 @@
     userMenuBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         userDropdown.classList.toggle('hidden');
+        var expanded = !userDropdown.classList.contains('hidden');
+        userMenuBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+
+    // Wire notification bell
+    document.getElementById('notif-bell-btn').addEventListener('click', function(e) {
+        e.stopPropagation();
+        Notifications.togglePanel();
     });
 
     document.addEventListener('click', function(e) {
+        // Close user dropdown
         if (!userDropdown.classList.contains('hidden') && !userDropdown.contains(e.target)) {
             userDropdown.classList.add('hidden');
+            userMenuBtn.setAttribute('aria-expanded', 'false');
+        }
+        // Close notification panel on outside click
+        var notifArea = document.querySelector('.topbar-notifications');
+        var panel = document.getElementById('notif-panel');
+        if (panel && !panel.classList.contains('hidden') && notifArea && !notifArea.contains(e.target)) {
+            Notifications.closePanel();
         }
     });
 
     document.getElementById('topbar-logout').addEventListener('click', function(e) {
         e.preventDefault();
         userDropdown.classList.add('hidden');
+        Notifications.disconnect();
         API.clearToken();
         window.location.hash = '#login';
     });

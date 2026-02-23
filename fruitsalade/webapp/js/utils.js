@@ -8,6 +8,8 @@ var Toast = (function() {
         if (!c) {
             c = document.createElement('div');
             c.id = 'toast-container';
+            c.setAttribute('role', 'status');
+            c.setAttribute('aria-live', 'polite');
             document.body.appendChild(c);
         }
         return c;
@@ -20,7 +22,7 @@ var Toast = (function() {
         var toast = document.createElement('div');
         toast.className = 'toast toast-' + (type || 'info');
         toast.innerHTML = '<span class="toast-msg">' + esc(message) + '</span>' +
-            '<button class="toast-close">&times;</button>';
+            '<button class="toast-close" aria-label="Dismiss">&times;</button>';
 
         container.appendChild(toast);
 
@@ -53,9 +55,13 @@ var Toast = (function() {
 
 var Modal = (function() {
     var currentOverlay = null;
+    var previousFocus = null;
+    var titleIdCounter = 0;
 
     function open(opts) {
         close(); // close any existing modal
+
+        previousFocus = document.activeElement;
 
         var overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
@@ -63,18 +69,25 @@ var Modal = (function() {
 
         var modal = document.createElement('div');
         modal.className = 'modal' + (opts.className ? ' ' + opts.className : '');
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.setAttribute('tabindex', '-1');
 
         var closeBtn = document.createElement('button');
         closeBtn.className = 'modal-close';
         closeBtn.innerHTML = '&times;';
+        closeBtn.setAttribute('aria-label', 'Close dialog');
         closeBtn.addEventListener('click', close);
 
         modal.appendChild(closeBtn);
 
         if (opts.title) {
+            var titleId = 'modal-title-' + (++titleIdCounter);
             var h3 = document.createElement('h3');
+            h3.id = titleId;
             h3.textContent = opts.title;
             modal.appendChild(h3);
+            modal.setAttribute('aria-labelledby', titleId);
         }
 
         if (typeof opts.content === 'string') {
@@ -93,8 +106,11 @@ var Modal = (function() {
         document.body.appendChild(overlay);
         currentOverlay = overlay;
 
-        // Escape key
-        document.addEventListener('keydown', onEscape);
+        // Focus the modal
+        modal.focus();
+
+        // Escape key + focus trap
+        document.addEventListener('keydown', onKeyDown);
 
         return modal;
     }
@@ -104,11 +120,41 @@ var Modal = (function() {
             if (currentOverlay.parentNode) currentOverlay.parentNode.removeChild(currentOverlay);
             currentOverlay = null;
         }
-        document.removeEventListener('keydown', onEscape);
+        document.removeEventListener('keydown', onKeyDown);
+        // Restore focus
+        if (previousFocus && previousFocus.focus) {
+            try { previousFocus.focus(); } catch(_) {}
+            previousFocus = null;
+        }
     }
 
-    function onEscape(e) {
-        if (e.key === 'Escape') close();
+    function onKeyDown(e) {
+        if (e.key === 'Escape') { close(); return; }
+        if (e.key === 'Tab' && currentOverlay) {
+            trapFocus(e);
+        }
+    }
+
+    function trapFocus(e) {
+        var modal = currentOverlay ? currentOverlay.querySelector('.modal') : null;
+        if (!modal) return;
+        var focusable = modal.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+            if (document.activeElement === first || document.activeElement === modal) {
+                e.preventDefault();
+                last.focus();
+            }
+        } else {
+            if (document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
     }
 
     function getModal() {

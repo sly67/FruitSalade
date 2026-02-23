@@ -9,7 +9,7 @@ function renderBrowser() {
             '<div class="toolbar-actions">' +
                 '<div class="search-wrap">' +
                     '<input type="text" id="search-input" placeholder="Search all files...">' +
-                    '<button class="btn btn-sm btn-outline" id="btn-clear-search" style="display:none" title="Clear">&times;</button>' +
+                    '<button class="btn btn-sm btn-outline" id="btn-clear-search" style="display:none" title="Clear" aria-label="Clear search">&times;</button>' +
                 '</div>' +
                 '<button class="btn btn-sm" id="btn-new-folder">New Folder</button>' +
                 '<button class="btn btn-sm" id="btn-upload">Upload</button>' +
@@ -51,13 +51,18 @@ function renderBrowser() {
     function buildBreadcrumb(path) {
         var bc = document.getElementById('breadcrumb');
         var parts = path.split('/').filter(Boolean);
-        var html = '<a href="#browser">/</a>';
+        var html = '<nav aria-label="Breadcrumb"><a href="#browser">/</a>';
         var accumulated = '';
         for (var i = 0; i < parts.length; i++) {
             accumulated += '/' + parts[i];
-            html += '<span class="sep">/</span>';
-            html += '<a href="#browser' + esc(accumulated) + '">' + esc(parts[i]) + '</a>';
+            html += '<span class="sep" aria-hidden="true">/</span>';
+            if (i === parts.length - 1) {
+                html += '<a href="#browser' + esc(accumulated) + '" aria-current="page">' + esc(parts[i]) + '</a>';
+            } else {
+                html += '<a href="#browser' + esc(accumulated) + '">' + esc(parts[i]) + '</a>';
+            }
         }
+        html += '</nav>';
         bc.innerHTML = html;
     }
 
@@ -163,14 +168,14 @@ function renderBrowser() {
         var sorted = sortItems(items);
 
         var html = '<table class="responsive-table"><thead><tr>' +
-            '<th class="cb-col"><input type="checkbox" id="select-all-cb"></th>' +
-            '<th class="fav-col"></th>' +
-            '<th class="sortable" data-sort="name">Name' + sortIndicator('name') + '</th>' +
-            '<th></th>' +
-            '<th class="sortable" data-sort="size">Size' + sortIndicator('size') + '</th>' +
-            '<th class="sortable" data-sort="version">Version' + sortIndicator('version') + '</th>' +
-            '<th class="sortable" data-sort="modified">Modified' + sortIndicator('modified') + '</th>' +
-            '<th></th>' +
+            '<th scope="col" class="cb-col"><input type="checkbox" id="select-all-cb"></th>' +
+            '<th scope="col" class="fav-col"></th>' +
+            '<th scope="col" class="sortable" data-sort="name">Name' + sortIndicator('name') + '</th>' +
+            '<th scope="col"></th>' +
+            '<th scope="col" class="sortable" data-sort="size">Size' + sortIndicator('size') + '</th>' +
+            '<th scope="col" class="sortable" data-sort="version">Version' + sortIndicator('version') + '</th>' +
+            '<th scope="col" class="sortable" data-sort="modified">Modified' + sortIndicator('modified') + '</th>' +
+            '<th scope="col"></th>' +
             '</tr></thead><tbody>';
 
         for (var i = 0; i < sorted.length; i++) {
@@ -200,13 +205,13 @@ function renderBrowser() {
 
             html += '<tr class="file-row' + (isSelected ? ' selected' : '') + '" data-path="' + esc(f.path) + '" data-isdir="' + (f.is_dir ? '1' : '0') + '" data-vis="' + esc(f.visibility || 'public') + '" data-idx="' + i + '">' +
                 '<td class="cb-col"><input type="checkbox" class="row-checkbox"' + (isSelected ? ' checked' : '') + '></td>' +
-                '<td class="fav-col"><button class="fav-btn' + (isFav ? ' fav-active' : '') + '" data-fav="' + esc(f.path) + '" title="' + (isFav ? 'Unstar' : 'Star') + '">' + (isFav ? '&#9733;' : '&#9734;') + '</button></td>' +
+                '<td class="fav-col"><button class="fav-btn' + (isFav ? ' fav-active' : '') + '" data-fav="' + esc(f.path) + '" title="' + (isFav ? 'Unstar' : 'Star') + '" aria-label="' + (isFav ? 'Unstar ' : 'Star ') + esc(f.name) + '">' + (isFav ? '&#9733;' : '&#9734;') + '</button></td>' +
                 '<td data-label="Name">' + nameLink + '</td>' +
                 '<td data-label="">' + visBadge + '</td>' +
                 '<td data-label="Size">' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
                 '<td data-label="Version">' + (f.version || '-') + '</td>' +
                 '<td data-label="Modified">' + formatDate(f.mod_time) + '</td>' +
-                '<td data-label=""><button class="kebab-btn" data-path="' + esc(f.path) + '">&#8942;</button></td>' +
+                '<td data-label=""><button class="kebab-btn" data-path="' + esc(f.path) + '" aria-label="Actions for ' + esc(f.name) + '">&#8942;</button></td>' +
                 '</tr>';
         }
 

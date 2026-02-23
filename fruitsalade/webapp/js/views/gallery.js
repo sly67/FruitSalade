@@ -47,10 +47,10 @@ function renderGallery() {
             '<div class="toolbar-actions">' +
                 '<input type="text" id="gallery-search-input" placeholder="Search images..." class="gallery-toolbar-search">' +
                 '<div class="gallery-view-toggles">' +
-                    '<button class="gallery-view-btn' + (viewMode === 'list' ? ' active' : '') + '" data-mode="list" title="List">&#9776;</button>' +
-                    '<button class="gallery-view-btn' + (viewMode === 'list-thumb' ? ' active' : '') + '" data-mode="list-thumb" title="List + Thumbnails">&#9783;</button>' +
-                    '<button class="gallery-view-btn' + (viewMode === 'grid' ? ' active' : '') + '" data-mode="grid" title="Grid">&#9638;</button>' +
-                    '<button class="gallery-view-btn' + (viewMode === 'grid-ext' ? ' active' : '') + '" data-mode="grid-ext" title="Grid + Details">&#9641;</button>' +
+                    '<button class="gallery-view-btn' + (viewMode === 'list' ? ' active' : '') + '" data-mode="list" title="List" aria-label="List view">&#9776;</button>' +
+                    '<button class="gallery-view-btn' + (viewMode === 'list-thumb' ? ' active' : '') + '" data-mode="list-thumb" title="List + Thumbnails" aria-label="List with thumbnails view">&#9783;</button>' +
+                    '<button class="gallery-view-btn' + (viewMode === 'grid' ? ' active' : '') + '" data-mode="grid" title="Grid" aria-label="Grid view">&#9638;</button>' +
+                    '<button class="gallery-view-btn' + (viewMode === 'grid-ext' ? ' active' : '') + '" data-mode="grid-ext" title="Grid + Details" aria-label="Grid with details view">&#9641;</button>' +
                 '</div>' +
                 '<select id="gallery-sort">' +
                     '<option value="date"' + (sortBy === 'date' ? ' selected' : '') + '>Sort: Date</option>' +
@@ -59,12 +59,12 @@ function renderGallery() {
                 '</select>' +
             '</div>' +
         '</div>' +
-        '<div class="gallery-page-nav">' +
-            '<button class="gallery-page-tab active" data-page="images">Images</button>' +
-            '<button class="gallery-page-tab" data-page="albums">Albums</button>' +
-            '<button class="gallery-page-tab" data-page="tags">Tags</button>' +
-            '<button class="gallery-page-tab" data-page="map">Map</button>' +
-            '<button class="gallery-page-tab" data-page="settings">Settings</button>' +
+        '<div class="gallery-page-nav" role="tablist">' +
+            '<button class="gallery-page-tab active" data-page="images" role="tab" aria-selected="true">Images</button>' +
+            '<button class="gallery-page-tab" data-page="albums" role="tab" aria-selected="false">Albums</button>' +
+            '<button class="gallery-page-tab" data-page="tags" role="tab" aria-selected="false">Tags</button>' +
+            '<button class="gallery-page-tab" data-page="map" role="tab" aria-selected="false">Map</button>' +
+            '<button class="gallery-page-tab" data-page="settings" role="tab" aria-selected="false">Settings</button>' +
         '</div>' +
         '<div id="gallery-album-breadcrumb" class="gallery-album-breadcrumb hidden"></div>' +
         '<div id="gallery-status"></div>' +
@@ -104,8 +104,12 @@ function renderGallery() {
 
                 // Update tab active state
                 var tabs = app.querySelectorAll('.gallery-page-tab');
-                for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
+                for (var j = 0; j < tabs.length; j++) {
+                    tabs[j].classList.remove('active');
+                    tabs[j].setAttribute('aria-selected', 'false');
+                }
                 btn.classList.add('active');
+                btn.setAttribute('aria-selected', 'true');
 
                 // Show/hide toolbar controls based on page
                 var viewToggles = app.querySelector('.gallery-view-toggles');
@@ -1773,12 +1777,12 @@ function renderGallery() {
 
         overlay.innerHTML =
             '<div class="lightbox-content">' +
-                '<button class="lightbox-close">&times;</button>' +
-                '<button class="lightbox-prev">&#10094;</button>' +
+                '<button class="lightbox-close" aria-label="Close lightbox">&times;</button>' +
+                '<button class="lightbox-prev" aria-label="Previous image">&#10094;</button>' +
                 '<div class="lightbox-image-wrap">' +
                     '<img class="lightbox-image" src="">' +
                 '</div>' +
-                '<button class="lightbox-next">&#10095;</button>' +
+                '<button class="lightbox-next" aria-label="Next image">&#10095;</button>' +
             '</div>' +
             '<div class="lightbox-sidebar hidden" id="lightbox-sidebar">' +
                 '<div class="lightbox-sidebar-header">' +
@@ -1788,10 +1792,10 @@ function renderGallery() {
                 '<div class="lightbox-sidebar-body" id="lightbox-sidebar-body"></div>' +
             '</div>' +
             '<div class="lightbox-toolbar">' +
-                '<button class="lightbox-btn" id="lb-info-btn" title="Info">&#9432;</button>' +
-                '<button class="lightbox-btn" id="lb-download-btn" title="Download">&#11015;</button>' +
-                '<button class="lightbox-btn" id="lb-share-btn" title="Share">&#128279;</button>' +
-                (activeAlbumId ? '<button class="lightbox-btn" id="lb-set-cover-btn" title="Set as Album Cover">&#9733;</button>' : '') +
+                '<button class="lightbox-btn" id="lb-info-btn" title="Info" aria-label="Show image info">&#9432;</button>' +
+                '<button class="lightbox-btn" id="lb-download-btn" title="Download" aria-label="Download image">&#11015;</button>' +
+                '<button class="lightbox-btn" id="lb-share-btn" title="Share" aria-label="Share image">&#128279;</button>' +
+                (activeAlbumId ? '<button class="lightbox-btn" id="lb-set-cover-btn" title="Set as Album Cover" aria-label="Set as album cover">&#9733;</button>' : '') +
                 '<span class="lightbox-counter" id="lb-counter"></span>' +
             '</div>';
 

@@ -13,9 +13,9 @@ function renderVersions() {
     var app = document.getElementById('app');
     app.innerHTML =
         '<div class="toolbar"><h2>File Management</h2></div>' +
-        '<div class="fm-tab-nav">' +
-            '<button class="fm-tab active" data-fm-tab="versions">Versions</button>' +
-            '<button class="fm-tab" data-fm-tab="conflicts">Conflicts</button>' +
+        '<div class="fm-tab-nav" role="tablist">' +
+            '<button class="fm-tab active" data-fm-tab="versions" role="tab" aria-selected="true">Versions</button>' +
+            '<button class="fm-tab" data-fm-tab="conflicts" role="tab" aria-selected="false">Conflicts</button>' +
         '</div>' +
         '<div id="fm-tab-content"></div>';
 
@@ -23,8 +23,12 @@ function renderVersions() {
     var tabs = app.querySelectorAll('.fm-tab');
     tabs.forEach(function(tab) {
         tab.addEventListener('click', function() {
-            tabs.forEach(function(t) { t.classList.remove('active'); });
+            tabs.forEach(function(t) {
+                t.classList.remove('active');
+                t.setAttribute('aria-selected', 'false');
+            });
             tab.classList.add('active');
+            tab.setAttribute('aria-selected', 'true');
             var target = tab.getAttribute('data-fm-tab');
             if (target === 'versions') renderVersionExplorerTab();
             else renderConflictsTab();

@@ -15,7 +15,7 @@ function renderLogin() {
                         '<label for="password">Password</label>' +
                         '<div class="password-wrap">' +
                             '<input type="password" id="password" autocomplete="current-password" required>' +
-                            '<button type="button" class="password-toggle" id="pw-toggle" title="Show password">&#128065;</button>' +
+                            '<button type="button" class="password-toggle" id="pw-toggle" title="Show password" aria-label="Show password">&#128065;</button>' +
                         '</div>' +
                     '</div>' +
                     '<button type="submit" class="btn login-submit">Login</button>' +
@@ -31,6 +31,7 @@ function renderLogin() {
         pwInput.type = isPassword ? 'text' : 'password';
         pwToggle.innerHTML = isPassword ? '&#128064;' : '&#128065;';
         pwToggle.title = isPassword ? 'Hide password' : 'Show password';
+        pwToggle.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
     });
 
     document.getElementById('login-form').addEventListener('submit', function(e) {
