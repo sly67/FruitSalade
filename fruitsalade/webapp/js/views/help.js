@@ -1726,25 +1726,27 @@ function buildHelpShell() {
     }
 
     return '' +
-        '<div class="toolbar">' +
-            '<h2>Help</h2>' +
-            '<div class="toolbar-actions">' +
-                '<input type="text" id="help-search-input" class="form-input" ' +
-                    'placeholder="Search documentation..." style="width:260px;max-width:100%">' +
+        '<div class="help-view">' +
+            '<div class="toolbar">' +
+                '<h2>Help</h2>' +
+                '<div class="toolbar-actions">' +
+                    '<input type="text" id="help-search-input" class="form-input" ' +
+                        'placeholder="Search documentation..." style="width:260px;max-width:100%">' +
+                '</div>' +
             '</div>' +
-        '</div>' +
-        '<div class="wiki-outer" id="wiki-outer">' +
-            '<nav class="wiki-cat-nav" id="help-tab-nav">' +
-                '<button class="wiki-cat-toggle" id="wiki-cat-toggle">Categories</button>' +
-                '<div class="wiki-cat-list" id="wiki-cat-list">' + catLinks + '</div>' +
-            '</nav>' +
-            '<div class="wiki-main">' +
-                '<div class="wiki-layout" id="wiki-layout">' +
-                    '<nav class="wiki-toc" id="wiki-toc">' +
-                        '<button class="wiki-toc-toggle" id="wiki-toc-toggle">Table of Contents</button>' +
-                        '<div class="wiki-toc-body" id="wiki-toc-body"></div>' +
-                    '</nav>' +
-                    '<div class="wiki-content" id="wiki-content"></div>' +
+            '<div class="wiki-outer" id="wiki-outer">' +
+                '<nav class="wiki-cat-nav" id="help-tab-nav">' +
+                    '<button class="wiki-cat-toggle" id="wiki-cat-toggle">Categories</button>' +
+                    '<div class="wiki-cat-list" id="wiki-cat-list">' + catLinks + '</div>' +
+                '</nav>' +
+                '<div class="wiki-main">' +
+                    '<div class="wiki-layout" id="wiki-layout">' +
+                        '<nav class="wiki-toc" id="wiki-toc">' +
+                            '<button class="wiki-toc-toggle" id="wiki-toc-toggle">Table of Contents</button>' +
+                            '<div class="wiki-toc-body" id="wiki-toc-body"></div>' +
+                        '</nav>' +
+                        '<div class="wiki-content" id="wiki-content"></div>' +
+                    '</div>' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -1960,6 +1962,7 @@ function setupHelpScrollSpy(articles) {
     if (!articles || articles.length === 0) return;
     if (!('IntersectionObserver' in window)) return;
 
+    var scrollRoot = document.querySelector('.wiki-main') || null;
     _helpScrollSpyObserver = new IntersectionObserver(function(entries) {
         for (var i = 0; i < entries.length; i++) {
             if (entries[i].isIntersecting) {
@@ -1976,7 +1979,8 @@ function setupHelpScrollSpy(articles) {
             }
         }
     }, {
-        rootMargin: '-80px 0px -60% 0px',
+        root: scrollRoot,
+        rootMargin: '-20px 0px -60% 0px',
         threshold: 0
     });
 
