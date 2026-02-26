@@ -22,6 +22,9 @@
         <div class="topbar-search">
             <input type="text" id="global-search" placeholder="Search files..." aria-label="Search files">
         </div>
+        <div class="topbar-transfers">
+            <button id="transfer-btn" aria-label="Transfers" class="hidden">&#8645;<span id="transfer-badge" class="transfer-badge hidden">0</span></button>
+        </div>
         <div class="topbar-notifications">
             <button id="notif-bell-btn" aria-label="Notifications" aria-expanded="false">&#128276;<span id="notif-badge" class="notif-badge hidden">0</span></button>
             <div id="notif-panel" class="notif-panel hidden" role="region" aria-label="Notifications"></div>
@@ -73,8 +76,11 @@
         <a id="tab-more" href="#"><span class="tab-icon">&#8943;</span><span class="tab-label">More</span></a>
     </nav>
 
+    <div id="transfer-panel" class="transfer-panel hidden"></div>
+
     <script src="js/api.js"></script>
     <script src="js/utils.js"></script>
+    <script src="js/transfers.js"></script>
     <script src="js/notifications.js"></script>
     <script src="js/views/login.js"></script>
     <script src="js/views/tree.js"></script>

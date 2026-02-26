@@ -11,6 +11,11 @@ function renderBrowser() {
                     '<input type="text" id="search-input" placeholder="Search all files...">' +
                     '<button class="btn btn-sm btn-outline" id="btn-clear-search" style="display:none" title="Clear" aria-label="Clear search">&times;</button>' +
                 '</div>' +
+                '<div class="browser-view-toggles" role="radiogroup" aria-label="View mode">' +
+                    '<button class="browser-view-btn' + (viewMode === 'list' ? ' active' : '') + '" data-view="list" title="List">&#9776;</button>' +
+                    '<button class="browser-view-btn' + (viewMode === 'compact' ? ' active' : '') + '" data-view="compact" title="Compact">&#9866;</button>' +
+                    '<button class="browser-view-btn' + (viewMode === 'tiles' ? ' active' : '') + '" data-view="tiles" title="Tiles">&#9638;</button>' +
+                '</div>' +
                 '<button class="btn btn-sm" id="btn-new-folder">New Folder</button>' +
                 '<button class="btn btn-sm" id="btn-new-file">New File</button>' +
                 '<button class="btn btn-sm" id="btn-upload">Upload</button>' +
@@ -43,6 +48,10 @@ function renderBrowser() {
     // Sort state
     var sortField = 'name';
     var sortDir = 'asc';
+
+    // View mode state
+    var viewMode = localStorage.getItem('browser-view-mode') || 'list';
+    var tileObjectURLs = [];
 
     // Selection state
     var selectedPaths = {};
@@ -157,7 +166,135 @@ function renderBrowser() {
         if (headerCb) headerCb.checked = allChecked && rows.length > 0;
     }
 
-    // Render file table
+    // ── View Mode Dispatch ─────────────────────────────────────────────────
+
+    function renderView(items) {
+        cleanupTileObjectURLs();
+        if (viewMode === 'compact') {
+            renderCompact(items);
+        } else if (viewMode === 'tiles') {
+            renderTiles(items);
+        } else {
+            renderTable(items);
+        }
+    }
+
+    function cleanupTileObjectURLs() {
+        for (var i = 0; i < tileObjectURLs.length; i++) {
+            URL.revokeObjectURL(tileObjectURLs[i]);
+        }
+        tileObjectURLs = [];
+    }
+
+    // ── Shared Row Wiring ───────────────────────────────────────────────────
+
+    function wireFileRows(container, items) {
+        // Wire kebab buttons
+        container.querySelectorAll('.kebab-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var row = btn.closest('.file-row');
+                var path = row.getAttribute('data-path');
+                var isDir = row.getAttribute('data-isdir') === '1';
+                var vis = row.getAttribute('data-vis');
+                var rect = btn.getBoundingClientRect();
+                showKebabMenu(path, isDir, vis, rect.right, rect.bottom);
+            });
+        });
+
+        // Wire favorite buttons
+        container.querySelectorAll('.fav-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var path = btn.getAttribute('data-fav');
+                var isFav = !!userFavorites[path];
+                if (isFav) {
+                    API.del('/api/v1/favorites/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(resp) {
+                        if (resp.ok) {
+                            delete userFavorites[path];
+                            btn.classList.remove('fav-active');
+                            btn.innerHTML = '&#9734;';
+                            btn.title = 'Star';
+                        }
+                    });
+                } else {
+                    API.put('/api/v1/favorites/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(resp) {
+                        if (resp.ok) {
+                            userFavorites[path] = true;
+                            btn.classList.add('fav-active');
+                            btn.innerHTML = '&#9733;';
+                            btn.title = 'Unstar';
+                        }
+                    });
+                }
+            });
+        });
+
+        // Wire context menu on rows
+        container.querySelectorAll('.file-row').forEach(function(row) {
+            row.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+                var path = row.getAttribute('data-path');
+                var isDir = row.getAttribute('data-isdir') === '1';
+                var vis = row.getAttribute('data-vis');
+                showKebabMenu(path, isDir, vis, e.clientX, e.clientY);
+            });
+        });
+
+        // Wire select-all checkbox
+        var selectAllCb = document.getElementById('select-all-cb');
+        if (selectAllCb) {
+            selectAllCb.addEventListener('change', function() {
+                var checked = selectAllCb.checked;
+                var rows = container.querySelectorAll('.file-row');
+                rows.forEach(function(row) {
+                    var path = row.getAttribute('data-path');
+                    if (checked) {
+                        selectedPaths[path] = true;
+                    } else {
+                        delete selectedPaths[path];
+                    }
+                });
+                syncCheckboxes();
+                updateBatchToolbar();
+            });
+        }
+
+        // Wire per-row checkboxes with shift+click
+        container.querySelectorAll('.row-checkbox').forEach(function(cb) {
+            cb.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var row = cb.closest('.file-row');
+                var path = row.getAttribute('data-path');
+                var idx = parseInt(row.getAttribute('data-idx'), 10);
+
+                if (e.shiftKey && lastClickedIndex >= 0) {
+                    var start = Math.min(lastClickedIndex, idx);
+                    var end = Math.max(lastClickedIndex, idx);
+                    var rows = container.querySelectorAll('.file-row');
+                    rows.forEach(function(r) {
+                        var rIdx = parseInt(r.getAttribute('data-idx'), 10);
+                        if (rIdx >= start && rIdx <= end) {
+                            selectedPaths[r.getAttribute('data-path')] = true;
+                        }
+                    });
+                } else {
+                    if (cb.checked) {
+                        selectedPaths[path] = true;
+                    } else {
+                        delete selectedPaths[path];
+                    }
+                }
+
+                lastClickedIndex = idx;
+                syncCheckboxes();
+                updateBatchToolbar();
+            });
+        });
+    }
+
+    // ── Render: List (default table) ────────────────────────────────────────
+
     function renderTable(items) {
         var table = document.getElementById('file-table');
         if (!items || items.length === 0) {
@@ -234,109 +371,134 @@ function renderBrowser() {
             });
         });
 
-        // Wire kebab buttons
-        table.querySelectorAll('.kebab-btn').forEach(function(btn) {
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                var row = btn.closest('.file-row');
-                var path = row.getAttribute('data-path');
-                var isDir = row.getAttribute('data-isdir') === '1';
-                var vis = row.getAttribute('data-vis');
-                var rect = btn.getBoundingClientRect();
-                showKebabMenu(path, isDir, vis, rect.right, rect.bottom);
-            });
-        });
+        wireFileRows(table, items);
+    }
 
-        // Wire favorite buttons
-        table.querySelectorAll('.fav-btn').forEach(function(btn) {
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                var path = btn.getAttribute('data-fav');
-                var isFav = !!userFavorites[path];
-                if (isFav) {
-                    API.del('/api/v1/favorites/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(resp) {
-                        if (resp.ok) {
-                            delete userFavorites[path];
-                            btn.classList.remove('fav-active');
-                            btn.innerHTML = '&#9734;';
-                            btn.title = 'Star';
-                        }
-                    });
-                } else {
-                    API.put('/api/v1/favorites/' + API.encodeURIPath(path.replace(/^\//, ''))).then(function(resp) {
-                        if (resp.ok) {
-                            userFavorites[path] = true;
-                            btn.classList.add('fav-active');
-                            btn.innerHTML = '&#9733;';
-                            btn.title = 'Unstar';
-                        }
-                    });
-                }
-            });
-        });
+    // ── Render: Compact ─────────────────────────────────────────────────────
 
-        // Wire context menu on rows
-        table.querySelectorAll('.file-row').forEach(function(row) {
-            row.addEventListener('contextmenu', function(e) {
-                e.preventDefault();
-                var path = row.getAttribute('data-path');
-                var isDir = row.getAttribute('data-isdir') === '1';
-                var vis = row.getAttribute('data-vis');
-                showKebabMenu(path, isDir, vis, e.clientX, e.clientY);
-            });
-        });
-
-        // Wire select-all checkbox
-        var selectAllCb = document.getElementById('select-all-cb');
-        if (selectAllCb) {
-            selectAllCb.addEventListener('change', function() {
-                var checked = selectAllCb.checked;
-                var rows = table.querySelectorAll('.file-row');
-                rows.forEach(function(row) {
-                    var path = row.getAttribute('data-path');
-                    if (checked) {
-                        selectedPaths[path] = true;
-                    } else {
-                        delete selectedPaths[path];
-                    }
-                });
-                syncCheckboxes();
-                updateBatchToolbar();
-            });
+    function renderCompact(items) {
+        var container = document.getElementById('file-table');
+        if (!items || items.length === 0) {
+            container.innerHTML = '<p style="padding:1.5rem;color:var(--text-muted)">Empty folder</p>';
+            clearSelection();
+            return;
         }
 
-        // Wire per-row checkboxes with shift+click
-        table.querySelectorAll('.row-checkbox').forEach(function(cb) {
-            cb.addEventListener('click', function(e) {
-                e.stopPropagation();
-                var row = cb.closest('.file-row');
-                var path = row.getAttribute('data-path');
-                var idx = parseInt(row.getAttribute('data-idx'), 10);
+        var sorted = sortItems(items);
 
-                if (e.shiftKey && lastClickedIndex >= 0) {
-                    // Range select
-                    var start = Math.min(lastClickedIndex, idx);
-                    var end = Math.max(lastClickedIndex, idx);
-                    var rows = table.querySelectorAll('.file-row');
-                    rows.forEach(function(r) {
-                        var rIdx = parseInt(r.getAttribute('data-idx'), 10);
-                        if (rIdx >= start && rIdx <= end) {
-                            selectedPaths[r.getAttribute('data-path')] = true;
-                        }
-                    });
+        var html = '<table class="compact-table"><thead><tr>' +
+            '<th scope="col" class="cb-col"><input type="checkbox" id="select-all-cb"></th>' +
+            '<th scope="col" class="fav-col"></th>' +
+            '<th scope="col" class="sortable" data-sort="name">Name' + sortIndicator('name') + '</th>' +
+            '<th scope="col" class="sortable" data-sort="size">Size' + sortIndicator('size') + '</th>' +
+            '<th scope="col" class="sortable compact-modified" data-sort="modified">Modified' + sortIndicator('modified') + '</th>' +
+            '<th scope="col" class="compact-kebab-col"></th>' +
+            '</tr></thead><tbody>';
+
+        for (var i = 0; i < sorted.length; i++) {
+            var f = sorted[i];
+            var iconHtml = FileTypes.icon(f.name, f.is_dir);
+            var href = f.is_dir ? '#browser' + esc(f.path) : '#viewer' + esc(f.path);
+            var isSelected = !!selectedPaths[f.path];
+            var isFav = !!userFavorites[f.path];
+
+            html += '<tr class="file-row' + (isSelected ? ' selected' : '') + '" data-path="' + esc(f.path) + '" data-isdir="' + (f.is_dir ? '1' : '0') + '" data-vis="' + esc(f.visibility || 'public') + '" data-idx="' + i + '">' +
+                '<td class="cb-col"><input type="checkbox" class="row-checkbox"' + (isSelected ? ' checked' : '') + '></td>' +
+                '<td class="fav-col"><button class="fav-btn' + (isFav ? ' fav-active' : '') + '" data-fav="' + esc(f.path) + '" title="' + (isFav ? 'Unstar' : 'Star') + '">' + (isFav ? '&#9733;' : '&#9734;') + '</button></td>' +
+                '<td><a class="file-name" href="' + href + '">' + iconHtml + esc(f.name) + '</a></td>' +
+                '<td>' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
+                '<td class="compact-modified">' + formatDate(f.mod_time) + '</td>' +
+                '<td class="compact-kebab-col"><button class="kebab-btn" data-path="' + esc(f.path) + '" aria-label="Actions for ' + esc(f.name) + '">&#8942;</button></td>' +
+                '</tr>';
+        }
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+        updateBatchToolbar();
+
+        // Wire sortable headers
+        container.querySelectorAll('.sortable').forEach(function(th) {
+            th.addEventListener('click', function() {
+                var field = th.getAttribute('data-sort');
+                if (sortField === field) {
+                    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
                 } else {
-                    if (cb.checked) {
-                        selectedPaths[path] = true;
-                    } else {
-                        delete selectedPaths[path];
-                    }
+                    sortField = field;
+                    sortDir = 'asc';
                 }
-
-                lastClickedIndex = idx;
-                syncCheckboxes();
-                updateBatchToolbar();
+                renderCompact(items);
             });
         });
+
+        wireFileRows(container, items);
+    }
+
+    // ── Render: Tiles ───────────────────────────────────────────────────────
+
+    function renderTiles(items) {
+        var container = document.getElementById('file-table');
+        if (!items || items.length === 0) {
+            container.innerHTML = '<p style="padding:1.5rem;color:var(--text-muted)">Empty folder</p>';
+            clearSelection();
+            return;
+        }
+
+        var sorted = sortItems(items);
+
+        var html = '<div class="tiles-grid">';
+        for (var i = 0; i < sorted.length; i++) {
+            var f = sorted[i];
+            var isSelected = !!selectedPaths[f.path];
+            var isFav = !!userFavorites[f.path];
+            var href = f.is_dir ? '#browser' + esc(f.path) : '#viewer' + esc(f.path);
+            var isImage = !f.is_dir && FileTypes.isGalleryImage(f.name);
+
+            html += '<div class="tile-card file-row' + (isSelected ? ' selected' : '') + '" data-path="' + esc(f.path) + '" data-isdir="' + (f.is_dir ? '1' : '0') + '" data-vis="' + esc(f.visibility || 'public') + '" data-idx="' + i + '">' +
+                '<div class="tile-controls">' +
+                    '<input type="checkbox" class="row-checkbox"' + (isSelected ? ' checked' : '') + '>' +
+                    '<div class="tile-controls-right">' +
+                        '<button class="fav-btn' + (isFav ? ' fav-active' : '') + '" data-fav="' + esc(f.path) + '" title="' + (isFav ? 'Unstar' : 'Star') + '">' + (isFav ? '&#9733;' : '&#9734;') + '</button>' +
+                        '<button class="kebab-btn" data-path="' + esc(f.path) + '" aria-label="Actions for ' + esc(f.name) + '">&#8942;</button>' +
+                    '</div>' +
+                '</div>' +
+                '<a href="' + href + '" class="tile-link">' +
+                    '<div class="tile-thumb">' +
+                        (isImage
+                            ? '<img class="tile-thumb-img" data-thumb-path="' + esc(f.path) + '" alt="" loading="lazy">'
+                            : '<div class="tile-icon">' + FileTypes.icon(f.name, f.is_dir) + '</div>') +
+                    '</div>' +
+                    '<div class="tile-label">' +
+                        '<div class="tile-name" title="' + esc(f.name) + '">' + esc(f.name) + '</div>' +
+                        '<div class="tile-meta">' + (f.is_dir ? 'Folder' : formatBytes(f.size)) + '</div>' +
+                    '</div>' +
+                '</a>' +
+                '</div>';
+        }
+        html += '</div>';
+        container.innerHTML = html;
+        updateBatchToolbar();
+
+        // Load thumbnails for images
+        container.querySelectorAll('.tile-thumb-img[data-thumb-path]').forEach(function(img) {
+            var filePath = img.getAttribute('data-thumb-path');
+            var url = '/api/v1/gallery/thumb/' + API.encodeURIPath(filePath.replace(/^\//, ''));
+            fetch(url, { headers: { 'Authorization': 'Bearer ' + API.getToken() } })
+                .then(function(r) { return r.blob(); })
+                .then(function(blob) {
+                    var objURL = URL.createObjectURL(blob);
+                    tileObjectURLs.push(objURL);
+                    img.src = objURL;
+                })
+                .catch(function() {
+                    // Fall back to file icon
+                    var iconDiv = document.createElement('div');
+                    iconDiv.className = 'tile-icon';
+                    iconDiv.innerHTML = FileTypes.icon(filePath.split('/').pop(), false);
+                    img.parentNode.replaceChild(iconDiv, img);
+                });
+        });
+
+        wireFileRows(container, items);
     }
 
     // ── Kebab / Context Menu ────────────────────────────────────────────────
@@ -828,61 +990,60 @@ function renderBrowser() {
         dropZone.classList.remove('drag-over');
         dropZone.classList.add('hidden');
 
-        // Check for directory entries
+        // Extract files from dataTransfer.items (more reliable than .files after webkitGetAsEntry)
         var items = e.dataTransfer.items;
-        if (items && items.length > 0 && items[0].webkitGetAsEntry) {
-            var entries = [];
+        if (items && items.length > 0) {
+            var dirEntries = [];
+            var fileList = [];
+
             for (var i = 0; i < items.length; i++) {
-                var entry = items[i].webkitGetAsEntry();
-                if (entry) entries.push(entry);
+                if (items[i].kind !== 'file') continue;
+                if (items[i].webkitGetAsEntry) {
+                    var entry = items[i].webkitGetAsEntry();
+                    if (entry && entry.isDirectory) {
+                        dirEntries.push(entry);
+                        continue;
+                    }
+                }
+                var f = items[i].getAsFile();
+                if (f) fileList.push(f);
             }
-            // Check if any entry is a directory
-            var hasDir = entries.some(function(ent) { return ent.isDirectory; });
-            if (hasDir) {
-                collectFolderFiles(entries).then(function(fileList) {
-                    if (fileList.length > 0) uploadFolderFiles(fileList);
+
+            if (dirEntries.length > 0) {
+                collectFolderFiles(dirEntries).then(function(folderFiles) {
+                    if (folderFiles.length > 0) uploadFolderFiles(folderFiles);
                 });
+                // Also upload any standalone files alongside the folders
+                if (fileList.length > 0) uploadFiles(fileList);
+                return;
+            }
+
+            if (fileList.length > 0) {
+                uploadFiles(fileList);
                 return;
             }
         }
 
-        if (e.dataTransfer.files.length > 0) {
+        // Fallback for browsers without DataTransferItemList
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             uploadFiles(e.dataTransfer.files);
         }
     });
 
     function uploadFiles(files) {
-        var pending = files.length;
-        var errors = [];
-        Toast.info('Uploading ' + pending + ' file(s)...');
-
+        if (!files || files.length === 0) return;
+        // Expose currentPath for Transfers to trigger loadDir on complete
+        window._currentBrowserPath = currentPath;
         for (var i = 0; i < files.length; i++) {
-            (function(file) {
-                var filePath = (currentPath === '/' ? '' : currentPath) + '/' + file.name;
-                API.upload(filePath.replace(/^\//, ''), file).then(function(resp) {
-                    pending--;
-                    if (!resp.ok) {
-                        errors.push(file.name);
-                    }
-                    if (pending === 0) {
-                        if (errors.length > 0) {
-                            Toast.error('Failed to upload: ' + errors.join(', '));
-                        } else {
-                            Toast.success('Upload complete!');
-                        }
-                        loadDir(currentPath);
-                    }
-                }).catch(function() {
-                    pending--;
-                    errors.push(file.name);
-                    if (pending === 0) {
-                        Toast.error('Failed to upload: ' + errors.join(', '));
-                        loadDir(currentPath);
-                    }
-                });
-            })(files[i]);
+            var filePath = (currentPath === '/' ? '' : currentPath) + '/' + files[i].name;
+            Transfers.enqueue(files[i], filePath);
         }
     }
+
+    // Reload file list when a transfer completes
+    window.addEventListener('transfer-complete', function() {
+        loadDir(currentPath);
+    });
 
     // Folder upload button
     document.getElementById('btn-upload-folder').addEventListener('click', function() {
@@ -951,9 +1112,10 @@ function renderBrowser() {
         return Promise.all(promises).then(function() { return allFiles; });
     }
 
-    // Upload folder files with progress modal
+    // Upload folder files via transfer queue
     function uploadFolderFiles(fileList) {
         if (fileList.length === 0) return;
+        window._currentBrowserPath = currentPath;
 
         // Collect unique directory paths
         var dirs = {};
@@ -971,70 +1133,42 @@ function renderBrowser() {
             return a.split('/').length - b.split('/').length;
         });
 
-        // Show progress modal
-        var progressDiv = document.createElement('div');
-        progressDiv.innerHTML =
-            '<div class="upload-progress">' +
-                '<p id="upload-progress-text">Preparing upload...</p>' +
-                '<div class="progress-bar-wrap"><div class="progress-bar" id="upload-progress-bar"></div></div>' +
-                '<p id="upload-progress-count">0 / ' + fileList.length + ' files</p>' +
-                '<div id="upload-errors" class="upload-errors"></div>' +
-            '</div>';
-        Modal.open({ title: 'Uploading Folder', content: progressDiv });
-
-        var completed = 0;
-        var errors = [];
-
-        // Create directories first, then upload files
+        // Create directories first, then enqueue files
         var dirPromise = Promise.resolve();
         for (var d = 0; d < dirList.length; d++) {
-            (function(dirPath) {
+            (function(dp) {
                 dirPromise = dirPromise.then(function() {
-                    var fullDirPath = (currentPath === '/' ? '' : currentPath) + '/' + dirPath;
+                    var fullDirPath = (currentPath === '/' ? '' : currentPath) + '/' + dp;
                     return API.put('/api/v1/tree/' + API.encodeURIPath(fullDirPath.replace(/^\//, '')) + '?type=dir');
                 });
             })(dirList[d]);
         }
 
         dirPromise.then(function() {
-            // Upload files sequentially
-            var uploadPromise = Promise.resolve();
             for (var fi = 0; fi < fileList.length; fi++) {
-                (function(fileEntry) {
-                    uploadPromise = uploadPromise.then(function() {
-                        var filePath = (currentPath === '/' ? '' : currentPath) + '/' + fileEntry.relativePath;
-                        document.getElementById('upload-progress-text').textContent = 'Uploading: ' + fileEntry.relativePath;
-
-                        return API.upload(filePath.replace(/^\//, ''), fileEntry.file).then(function(resp) {
-                            completed++;
-                            if (!resp.ok) errors.push(fileEntry.relativePath);
-                            var pct = Math.round((completed / fileList.length) * 100);
-                            document.getElementById('upload-progress-bar').style.width = pct + '%';
-                            document.getElementById('upload-progress-count').textContent =
-                                completed + ' / ' + fileList.length + ' files';
-                        }).catch(function() {
-                            completed++;
-                            errors.push(fileEntry.relativePath);
-                            var pct = Math.round((completed / fileList.length) * 100);
-                            document.getElementById('upload-progress-bar').style.width = pct + '%';
-                            document.getElementById('upload-progress-count').textContent =
-                                completed + ' / ' + fileList.length + ' files';
-                        });
-                    });
-                })(fileList[fi]);
+                var filePath = (currentPath === '/' ? '' : currentPath) + '/' + fileList[fi].relativePath;
+                Transfers.enqueue(fileList[fi].file, filePath);
             }
-
-            return uploadPromise;
-        }).then(function() {
-            Modal.close();
-            if (errors.length > 0) {
-                Toast.error('Failed to upload ' + errors.length + ' file(s)');
-            } else {
-                Toast.success('Folder uploaded: ' + fileList.length + ' file(s)');
-            }
-            loadDir(currentPath);
+        }).catch(function() {
+            Toast.error('Failed to create directories');
         });
     }
+
+    // View toggle wiring
+    document.querySelectorAll('.browser-view-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var mode = btn.getAttribute('data-view');
+            if (mode === viewMode) return;
+            viewMode = mode;
+            localStorage.setItem('browser-view-mode', mode);
+            document.querySelectorAll('.browser-view-btn').forEach(function(b) {
+                b.classList.toggle('active', b.getAttribute('data-view') === mode);
+            });
+            if (!isSearching) {
+                renderView(allItems);
+            }
+        });
+    });
 
     // Global search
     var searchTimer = null;
@@ -1076,7 +1210,7 @@ function renderBrowser() {
         isSearching = false;
         clearBtn.style.display = 'none';
         document.getElementById('breadcrumb').classList.remove('hidden');
-        renderTable(allItems);
+        renderView(allItems);
     }
 
     function globalSearch(query) {
@@ -1609,7 +1743,7 @@ function renderBrowser() {
             }
             var root = data.root;
             allItems = root.children || [];
-            renderTable(allItems);
+            renderView(allItems);
         }).catch(function() {
             document.getElementById('file-table').innerHTML =
                 '<div class="alert alert-error">Failed to load files</div>';

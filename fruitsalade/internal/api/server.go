@@ -75,6 +75,9 @@ type Server struct {
 	galleryStore *gallery.GalleryStore
 	processor    *gallery.Processor
 	pluginCaller *gallery.PluginCaller
+
+	// Chunked uploads
+	chunked *ChunkedUploadManager
 }
 
 // GalleryDeps bundles the gallery subsystem dependencies.
@@ -121,6 +124,14 @@ func NewServer(
 		s.processor = galleryDeps.Processor
 		s.pluginCaller = galleryDeps.PluginCaller
 	}
+
+	// Initialize chunked upload manager
+	tempDir := "/data/uploads-tmp"
+	if dir := os.Getenv("UPLOAD_TEMP_DIR"); dir != "" {
+		tempDir = dir
+	}
+	s.chunked = NewChunkedUploadManager(metadata.DB(), tempDir, s)
+
 	return s
 }
 
@@ -135,6 +146,10 @@ func (s *Server) Init(ctx context.Context) error {
 	count := countNodes(tree)
 	metrics.SetMetadataTreeSize(int64(count))
 	logging.Info("metadata tree built", zap.Int("items", count))
+
+	// Start chunked upload cleanup
+	s.chunked.StartCleanup(ctx)
+
 	return nil
 }
 
@@ -220,6 +235,13 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /api/v1/content/{path...}", s.handleUpload)
 	protected.HandleFunc("PUT /api/v1/tree/{path...}", s.handleCreateOrUpdate)
 	protected.HandleFunc("DELETE /api/v1/tree/{path...}", s.handleDelete)
+
+	// Chunked upload endpoints
+	protected.HandleFunc("POST /api/v1/uploads/init", s.chunked.handleInitUpload)
+	protected.HandleFunc("PUT /api/v1/uploads/{uploadId}/{chunkIndex}", s.chunked.handleUploadChunk)
+	protected.HandleFunc("POST /api/v1/uploads/{uploadId}/complete", s.chunked.handleCompleteUpload)
+	protected.HandleFunc("GET /api/v1/uploads/{uploadId}/status", s.chunked.handleUploadStatus)
+	protected.HandleFunc("DELETE /api/v1/uploads/{uploadId}", s.chunked.handleAbortUpload)
 
 	// Version endpoints
 	protected.HandleFunc("GET /api/v1/versions", s.handleVersionedFiles)

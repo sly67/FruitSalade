@@ -63,9 +63,42 @@ var API = (function() {
         return request('DELETE', path, body);
     }
 
-    // Upload a file to a path (raw binary POST)
-    function upload(path, file) {
-        return request('POST', '/api/v1/content/' + encodeURIPath(path), undefined, file);
+    // Upload a file to a path via XHR (streams File without buffering into memory)
+    // onProgress(loaded, total) is optional
+    function upload(path, file, onProgress) {
+        var url = '/api/v1/content/' + encodeURIPath(path);
+        return new Promise(function(resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+            var token = getToken();
+            if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+
+            xhr.onload = function() {
+                if (xhr.status === 401) {
+                    clearToken();
+                    window.location.hash = '#login';
+                    reject(new Error('Unauthorized'));
+                    return;
+                }
+                // Mimic fetch Response interface
+                resolve({
+                    ok: xhr.status >= 200 && xhr.status < 300,
+                    status: xhr.status,
+                    json: function() { return Promise.resolve(JSON.parse(xhr.responseText)); },
+                    text: function() { return Promise.resolve(xhr.responseText); }
+                });
+            };
+            xhr.onerror = function() { reject(new Error('network error')); };
+            xhr.ontimeout = function() { reject(new Error('upload timed out')); };
+
+            if (onProgress && xhr.upload) {
+                xhr.upload.onprogress = function(e) {
+                    if (e.lengthComputable) onProgress(e.loaded, e.total);
+                };
+            }
+
+            xhr.send(file);
+        });
     }
 
     // Get download URL with auth token

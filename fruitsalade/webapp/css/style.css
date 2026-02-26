@@ -1447,8 +1447,9 @@ mark {
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: var(--radius);
-        margin-bottom: 0.75rem;
-        padding: 0.85rem;
+        margin-bottom: 0.5rem;
+        padding: 0.5rem 0.6rem;
+        padding-bottom: 1.5rem;
         position: relative;
     }
     .responsive-table tr:hover td { background: transparent; }
@@ -1456,13 +1457,13 @@ mark {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 0.3rem 0;
+        padding: 0.15rem 0;
         border-bottom: none;
     }
     .responsive-table td::before {
         content: attr(data-label);
         font-weight: 600;
-        font-size: 0.8rem;
+        font-size: 0.7rem;
         color: var(--text-muted);
         text-transform: uppercase;
         letter-spacing: 0.03em;
@@ -1476,13 +1477,49 @@ mark {
     }
     .responsive-table .cb-col {
         position: absolute;
-        top: 0.5rem;
-        right: 0.5rem;
+        top: 0.35rem;
+        right: 0.35rem;
         padding: 0;
         width: auto;
         min-width: auto;
     }
     .responsive-table .cb-col::before { display: none; }
+
+    /* Fav star: compact position next to checkbox */
+    .responsive-table .fav-col {
+        position: absolute;
+        top: 0.35rem;
+        right: 2.2rem;
+        padding: 0;
+        width: auto;
+        min-width: auto;
+    }
+    .responsive-table .fav-col::before { display: none; }
+
+    /* Hide visibility badge column on mobile (4th child) */
+    .responsive-table td:nth-child(4) { display: none; }
+
+    /* Hide version column on mobile (6th child) */
+    .responsive-table td:nth-child(6) { display: none; }
+
+    /* Kebab menu: compact position bottom-right of card */
+    .responsive-table td:nth-child(8) {
+        position: absolute;
+        bottom: 0.35rem;
+        right: 0.35rem;
+        padding: 0;
+        width: auto;
+    }
+    .responsive-table td:nth-child(8)::before { display: none; }
+
+    /* File name: truncate long names on mobile */
+    .responsive-table td:nth-child(3) { min-width: 0; }
+    .responsive-table td:nth-child(3) .file-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
     .batch-toolbar { font-size: 0.8rem; }
 }
 
@@ -1586,6 +1623,8 @@ mark {
     .fm-conflict-folder { margin: 0 0.25rem 0.5rem; }
     .fm-conflict-card-header { padding: 0.5rem 0.65rem; }
     .fm-conflict-actions { padding: 0.5rem 0.65rem; gap: 0.35rem; }
+
+    .help-view { height: calc(100% + 1rem); margin: -0.5rem; }
 }
 
 /* --- Group Tree --- */
@@ -4682,7 +4721,8 @@ mark {
 
 @media (max-width: 768px) {
     .help-view {
-        height: calc(100vh - var(--topbar-height));
+        height: calc(100% + 2rem);
+        margin: -1rem;
     }
 
     .wiki-outer {
@@ -5136,4 +5176,514 @@ mark {
         min-width: 0;
         max-width: none;
     }
+
+    .transfer-panel {
+        left: 0;
+        right: 0;
+        width: 100%;
+        max-height: 60vh;
+        border-radius: 12px 12px 0 0;
+    }
+
+    .transfer-item {
+        flex-wrap: wrap;
+    }
+
+    .transfer-item-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: 4px;
+    }
+}
+
+/* ─── Transfer Panel ──────────────────────────────────────────────────────── */
+
+.transfer-panel {
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    width: 420px;
+    max-height: 360px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+    box-shadow: var(--shadow-lg);
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: transform 0.25s ease;
+}
+
+.transfer-panel.hidden {
+    display: none;
+}
+
+.transfer-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--bg);
+}
+
+.transfer-panel-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--text);
+}
+
+.transfer-panel-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.transfer-action-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.transfer-action-btn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+.transfer-panel-list {
+    overflow-y: auto;
+    flex: 1;
+    padding: 4px 0;
+}
+
+.transfer-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    gap: 8px;
+    min-height: 48px;
+    border-bottom: 1px solid var(--border);
+}
+
+.transfer-item:last-child {
+    border-bottom: none;
+}
+
+.transfer-item-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.transfer-item-icon {
+    flex-shrink: 0;
+    width: 24px;
+    text-align: center;
+}
+
+.transfer-item-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.transfer-item-name {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+}
+
+.transfer-progress {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 4px 0 2px;
+    overflow: hidden;
+}
+
+.transfer-progress-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 2px;
+    transition: width 0.2s ease;
+}
+
+.transfer-progress-complete {
+    background: var(--success);
+}
+
+.transfer-progress-failed {
+    background: var(--danger);
+}
+
+.transfer-progress-paused {
+    background: var(--text-muted);
+}
+
+.transfer-item-meta {
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.transfer-speed, .transfer-eta {
+    color: var(--text-muted);
+}
+
+.transfer-error {
+    color: var(--danger);
+}
+
+.transfer-item-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.transfer-item-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1;
+}
+
+.transfer-item-btn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+.transfer-item-btn-cancel:hover {
+    background: #FEE2E2;
+    color: var(--danger);
+}
+
+/* Transfer topbar button */
+.topbar-transfers {
+    display: flex;
+    align-items: center;
+}
+
+.topbar-transfers button {
+    position: relative;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    color: var(--text);
+}
+
+.topbar-transfers button:hover {
+    background: var(--surface-hover);
+}
+
+.transfer-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.625rem;
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 8px;
+    padding: 0 4px;
+}
+
+[data-theme="dark"] .transfer-item-btn-cancel:hover {
+    background: rgba(239, 68, 68, 0.15);
+}
+
+/* ─── Browser View Mode Toggles ───────────────────────────────────────────── */
+
+.browser-view-toggles {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.browser-view-btn {
+    background: var(--surface);
+    border: none;
+    padding: 0.35rem 0.55rem;
+    font-size: 1rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    line-height: 1;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.browser-view-btn:not(:last-child) {
+    border-right: 1px solid var(--border);
+}
+
+.browser-view-btn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+.browser-view-btn.active {
+    background: var(--primary);
+    color: #fff;
+}
+
+/* ─── Compact Table ───────────────────────────────────────────────────────── */
+
+.compact-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.compact-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.compact-table th {
+    text-align: left;
+    padding: 0.3rem 0.75rem;
+    font-weight: 600;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: default;
+}
+
+.compact-table th.sortable { cursor: pointer; }
+.compact-table th.sortable:hover { color: var(--primary); }
+
+.compact-table td {
+    padding: 0.3rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0;
+}
+
+.compact-table tr:hover td { background: var(--surface-hover); }
+.compact-table tr.selected td { background: var(--primary-light); }
+
+.compact-table .cb-col { width: 32px; min-width: 32px; max-width: 32px; padding: 0.2rem 0.4rem; }
+.compact-table .fav-col { width: 28px; min-width: 28px; max-width: 28px; padding: 0.2rem 0.2rem; }
+.compact-table .compact-kebab-col { width: 32px; min-width: 32px; max-width: 32px; padding: 0.2rem 0.4rem; text-align: center; }
+
+.compact-table td:nth-child(3) { max-width: none; }
+.compact-table .file-name { font-size: 0.8rem; }
+
+/* ─── Tiles Grid ──────────────────────────────────────────────────────────── */
+
+.tiles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.75rem;
+    padding: 0.75rem;
+}
+
+.tile-card {
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--surface);
+    transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+    cursor: default;
+}
+
+.tile-card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.tile-card.selected {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px var(--primary-light);
+}
+
+.tile-controls {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 0.35rem;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+    background: linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, transparent 100%);
+}
+
+.tile-card:hover .tile-controls,
+.tile-card.selected .tile-controls {
+    opacity: 1;
+}
+
+.tile-controls .row-checkbox {
+    cursor: pointer;
+}
+
+.tile-controls-right {
+    display: flex;
+    gap: 0.15rem;
+    align-items: center;
+}
+
+.tile-controls .fav-btn,
+.tile-controls .kebab-btn {
+    background: rgba(255,255,255,0.85);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 0.15rem 0.3rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--text);
+}
+
+.tile-controls .fav-btn:hover,
+.tile-controls .kebab-btn:hover {
+    background: rgba(255,255,255,1);
+}
+
+.tile-controls .fav-btn.fav-active {
+    color: var(--warning);
+}
+
+.tile-link {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+}
+
+.tile-thumb {
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    overflow: hidden;
+}
+
+.tile-thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.tile-icon {
+    font-size: 2.5rem;
+    line-height: 1;
+    text-align: center;
+}
+
+.tile-icon .file-icon {
+    font-size: 2.5rem;
+}
+
+.tile-label {
+    padding: 0.4rem 0.5rem;
+    border-top: 1px solid var(--border);
+}
+
+.tile-name {
+    font-size: 0.8rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tile-meta {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.1rem;
+}
+
+/* ─── Dark mode overrides for tiles & compact ─────────────────────────────── */
+
+[data-theme="dark"] .tile-controls .fav-btn,
+[data-theme="dark"] .tile-controls .kebab-btn {
+    background: rgba(30,41,59,0.85);
+    color: var(--text);
+}
+
+[data-theme="dark"] .tile-controls .fav-btn:hover,
+[data-theme="dark"] .tile-controls .kebab-btn:hover {
+    background: rgba(30,41,59,1);
+}
+
+[data-theme="dark"] .compact-table th { background: #141E30; }
+[data-theme="dark"] .compact-table tr:hover td { background: var(--surface-hover); }
+
+/* ─── Mobile: Tiles & Compact (<=768px) ───────────────────────────────────── */
+
+@media (max-width: 768px) {
+    .tiles-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.5rem;
+        padding: 0.5rem;
+    }
+
+    .tile-thumb { height: 90px; }
+
+    /* Always show controls on touch devices */
+    .tile-controls { opacity: 1; }
+
+    .compact-table th,
+    .compact-table td {
+        padding: 0.2rem 0.5rem;
+    }
+
+    .compact-modified { display: none; }
+
+    .browser-view-toggles {
+        order: -1;
+        width: 100%;
+        justify-content: center;
+    }
+
+    .browser-view-btn {
+        flex: 1;
+        text-align: center;
+        padding: 0.3rem 0.4rem;
+        font-size: 0.9rem;
+    }
+}
+
+/* ─── Small phone (<=480px) ───────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+    .tile-thumb { height: 72px; }
+    .tile-icon { font-size: 2rem; }
+    .tile-icon .file-icon { font-size: 2rem; }
 }

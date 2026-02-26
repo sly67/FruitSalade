@@ -259,6 +259,15 @@
         userMenuBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     });
 
+    // Wire transfer panel toggle
+    document.getElementById('transfer-btn').addEventListener('click', function(e) {
+        e.stopPropagation();
+        Transfers.togglePanel();
+    });
+
+    // Initialize transfer queue
+    Transfers.init();
+
     // Wire notification bell
     document.getElementById('notif-bell-btn').addEventListener('click', function(e) {
         e.stopPropagation();

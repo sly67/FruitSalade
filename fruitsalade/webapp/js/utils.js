@@ -43,11 +43,50 @@ var Toast = (function() {
         setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 300);
     }
 
+    var progressCounter = 0;
+
+    // Persistent progress toast (no auto-dismiss)
+    function showProgress(message, pct) {
+        var id = 'toast-progress-' + (++progressCounter);
+        var container = getContainer();
+        var toast = document.createElement('div');
+        toast.className = 'toast toast-info';
+        toast.id = id;
+        toast.innerHTML = '<div class="toast-progress-wrap">' +
+            '<span class="toast-msg">' + esc(message) + '</span>' +
+            '<div class="toast-progress-bar-wrap"><div class="toast-progress-bar" style="width:' + (pct || 0) + '%"></div></div>' +
+            '</div>' +
+            '<button class="toast-close" aria-label="Dismiss">&times;</button>';
+        container.appendChild(toast);
+        requestAnimationFrame(function() { toast.classList.add('toast-visible'); });
+        toast.querySelector('.toast-close').addEventListener('click', function() {
+            dismiss(toast);
+        });
+        return id;
+    }
+
+    function updateProgress(id, message, pct) {
+        var toast = document.getElementById(id);
+        if (!toast) return;
+        var msg = toast.querySelector('.toast-msg');
+        if (msg) msg.textContent = message;
+        var bar = toast.querySelector('.toast-progress-bar');
+        if (bar) bar.style.width = (pct || 0) + '%';
+    }
+
+    function dismissProgress(id) {
+        var toast = document.getElementById(id);
+        if (toast) dismiss(toast);
+    }
+
     return {
         show: show,
         success: function(msg, dur) { show(msg, 'success', dur); },
         error: function(msg, dur) { show(msg, 'error', dur); },
-        info: function(msg, dur) { show(msg, 'info', dur); }
+        info: function(msg, dur) { show(msg, 'info', dur); },
+        progress: showProgress,
+        updateProgress: updateProgress,
+        dismissProgress: dismissProgress
     };
 })();
 

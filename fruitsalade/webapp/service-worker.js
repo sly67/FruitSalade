@@ -1,5 +1,5 @@
 // FruitSalade Service Worker — offline-first caching
-var CACHE_VERSION = 'fs-v2';
+var CACHE_VERSION = 'fs-v3';
 var SHELL_CACHE = 'app-shell-' + CACHE_VERSION;
 var CDN_CACHE = 'cdn-' + CACHE_VERSION;
 var API_CACHE = 'api-' + CACHE_VERSION;
@@ -15,6 +15,7 @@ var SHELL_URLS = [
     '/app/manifest.json',
     '/app/js/api.js',
     '/app/js/utils.js',
+    '/app/js/transfers.js',
     '/app/js/notifications.js',
     '/app/js/app.js',
     '/app/js/views/login.js',
