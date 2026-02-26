@@ -1555,10 +1555,10 @@ mark {
     .responsive-table tbody { display: block; }
     .responsive-table tr {
         display: grid;
-        grid-template-columns: auto 1fr auto;
+        grid-template-columns: auto 1fr auto auto;
         grid-template-rows: auto auto;
         align-items: center;
-        gap: 0 0.4rem;
+        gap: 0 0.3rem;
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: var(--radius-sm);
@@ -1577,7 +1577,7 @@ mark {
     /* Hide all ::before labels — we use grid layout instead */
     .responsive-table td::before { display: none; }
 
-    /* Row 1: checkbox | name | fav + kebab */
+    /* Col 1: checkbox — spans both rows */
     .responsive-table .cb-col {
         grid-row: 1 / 3;
         grid-column: 1;
@@ -1588,9 +1588,18 @@ mark {
         align-items: center;
     }
 
-    .responsive-table .fav-col { display: none; }
+    /* Col 3: fav star — spans both rows */
+    .responsive-table .fav-col {
+        grid-row: 1 / 3;
+        grid-column: 3;
+        display: flex;
+        align-items: center;
+        padding: 0;
+        width: auto;
+        min-width: auto;
+    }
 
-    /* Name cell: row 1, col 2 */
+    /* Col 2, row 1: name */
     .responsive-table td:nth-child(3) {
         grid-row: 1;
         grid-column: 2;
@@ -1609,7 +1618,7 @@ mark {
     /* Hide visibility badge column (4th child) */
     .responsive-table td:nth-child(4) { display: none; }
 
-    /* Size: row 2, col 2 — inline with modified */
+    /* Col 2, row 2: size */
     .responsive-table td:nth-child(5) {
         grid-row: 2;
         grid-column: 2;
@@ -1621,13 +1630,13 @@ mark {
     /* Hide version column (6th child) */
     .responsive-table td:nth-child(6) { display: none; }
 
-    /* Modified: append after size in same grid cell — hide on mobile for compactness */
+    /* Hide modified column (7th child) */
     .responsive-table td:nth-child(7) { display: none; }
 
-    /* Kebab menu: row 1-2, col 3 */
+    /* Col 4: kebab — spans both rows */
     .responsive-table td:nth-child(8) {
         grid-row: 1 / 3;
-        grid-column: 3;
+        grid-column: 4;
         display: flex;
         align-items: center;
         padding: 0;
@@ -5869,6 +5878,25 @@ mark {
 [data-theme="dark"] .compact-table th { background: #141E30; }
 [data-theme="dark"] .compact-table tr:hover td { background: var(--surface-hover); }
 
+@media (max-width: 768px) {
+    [data-theme="dark"] .tile-controls .fav-btn,
+    [data-theme="dark"] .tile-controls .kebab-btn {
+        background: none;
+        color: var(--text-muted);
+    }
+    [data-theme="dark"] .tile-controls .fav-btn:hover,
+    [data-theme="dark"] .tile-controls .kebab-btn:hover {
+        background: var(--surface-hover);
+    }
+    [data-theme="dark"] .tile-controls .fav-btn.fav-active {
+        color: var(--warning);
+    }
+    [data-theme="dark"] .tile-controls .row-checkbox {
+        background: var(--surface);
+        border-color: var(--border-strong);
+    }
+}
+
 /* ─── Mobile: Tiles & Compact (<=768px) ───────────────────────────────────── */
 
 @media (max-width: 768px) {
@@ -5880,8 +5908,60 @@ mark {
 
     .tile-thumb { height: 90px; }
 
-    /* Always show controls on touch devices */
-    .tile-controls { opacity: 1; }
+    /* Always show controls on touch — no gradient overlay */
+    .tile-controls {
+        opacity: 1;
+        background: none;
+        position: relative;
+        padding: 0.25rem 0.35rem;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .tile-controls .row-checkbox {
+        background: var(--surface);
+        border-color: var(--border-strong);
+    }
+
+    .tile-controls .fav-btn,
+    .tile-controls .kebab-btn {
+        background: none;
+        color: var(--text-muted);
+        padding: 0.25rem 0.4rem;
+        font-size: 1rem;
+        min-width: 32px;
+        min-height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .tile-controls .fav-btn.fav-active {
+        color: var(--warning);
+    }
+
+    .tile-controls .kebab-btn:hover,
+    .tile-controls .fav-btn:hover {
+        background: var(--surface-hover);
+    }
+
+    .tile-controls-right {
+        gap: 0;
+    }
+
+    .tile-label {
+        padding: 0.25rem 0.35rem;
+    }
+
+    .tile-name {
+        font-size: 0.75rem;
+    }
+
+    .tile-meta {
+        font-size: 0.65rem;
+    }
 
     .compact-table th,
     .compact-table td {
