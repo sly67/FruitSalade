@@ -1382,8 +1382,8 @@ function renderBrowser() {
         var total = items.length;
         var shown = items.slice(0, 200);
 
-        var html = '<table class="responsive-table"><thead><tr>' +
-            '<th>Name</th><th>Path</th><th>Size</th><th>Modified</th>' +
+        var html = '<table class="search-results-table"><thead><tr>' +
+            '<th>Name</th><th>Size</th>' +
             '</tr></thead><tbody>';
 
         for (var i = 0; i < shown.length; i++) {
@@ -1396,11 +1396,10 @@ function renderBrowser() {
             var displayPath = highlightMatch(f.path, query);
 
             html += '<tr class="file-row">' +
-                '<td data-label="Name"><a class="file-name" href="' + esc(href) + '">' +
-                    iconHtml + displayName + '</a></td>' +
-                '<td data-label="Path" class="search-path">' + displayPath + '</td>' +
-                '<td data-label="Size">' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
-                '<td data-label="Modified">' + formatDate(f.mod_time) + '</td>' +
+                '<td><a class="file-name" href="' + esc(href) + '">' +
+                    iconHtml + displayName + '</a>' +
+                    '<div class="search-result-path">' + displayPath + '</div></td>' +
+                '<td>' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
                 '</tr>';
         }
 
@@ -1897,11 +1896,9 @@ function renderFavorites() {
             return;
         }
 
-        var html = '<table class="responsive-table"><thead><tr>' +
+        var html = '<table class="favorites-table"><thead><tr>' +
             '<th>Name</th>' +
-            '<th>Path</th>' +
             '<th>Size</th>' +
-            '<th>Modified</th>' +
             '<th></th>' +
             '</tr></thead><tbody>';
 
@@ -1912,12 +1909,11 @@ function renderFavorites() {
             var displayName = f.file_name || f.file_path.split('/').pop();
 
             html += '<tr class="file-row">' +
-                '<td data-label="Name"><a class="file-name" href="' + esc(href) + '">' +
-                    iconHtml + esc(displayName) + '</a></td>' +
-                '<td data-label="Path" class="search-path"><code>' + esc(f.file_path) + '</code></td>' +
-                '<td data-label="Size">' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
-                '<td data-label="Modified">' + formatDate(f.mod_time) + '</td>' +
-                '<td data-label="">' +
+                '<td><a class="file-name" href="' + esc(href) + '">' +
+                    iconHtml + esc(displayName) + '</a>' +
+                    '<div class="fav-path">' + esc(f.file_path) + '</div></td>' +
+                '<td>' + (f.is_dir ? '-' : formatBytes(f.size)) + '</td>' +
+                '<td>' +
                     '<button class="btn btn-sm btn-outline" data-unfav="' + esc(f.file_path) + '" title="Remove favorite">&#9733;</button>' +
                 '</td>' +
                 '</tr>';
