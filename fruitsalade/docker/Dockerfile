@@ -17,14 +17,23 @@ RUN apk add --no-cache git
 
 WORKDIR /build
 
-# Copy workspace and source
+# Copy dependency manifests first (cached layer)
 COPY go.work ./
+COPY shared/go.mod shared/go.sum ./shared/
+COPY fruitsalade/go.mod fruitsalade/go.sum ./fruitsalade/
+
+# Download dependencies (only re-runs when go.mod/go.sum change)
+WORKDIR /build/fruitsalade
+ENV GOWORK=off
+RUN go mod download
+
+# Copy source code (changes frequently, but deps are already cached)
+WORKDIR /build
 COPY shared/ ./shared/
 COPY fruitsalade/ ./fruitsalade/
 
 # Build binaries
 WORKDIR /build/fruitsalade
-ENV GOWORK=off
 RUN go build -ldflags="-s -w" -trimpath -o /bin/server ./cmd/server
 RUN go build -ldflags="-s -w" -trimpath -o /bin/seed-tool ./cmd/seed-tool
 RUN go build -ldflags="-s -w" -trimpath -o /bin/fuse-client ./cmd/fuse-client  # client target only
