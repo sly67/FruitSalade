@@ -170,6 +170,7 @@ function renderBrowser() {
 
     function renderView(items) {
         cleanupTileObjectURLs();
+        kbFocusIndex = -1;
         if (viewMode === 'compact') {
             renderCompact(items);
         } else if (viewMode === 'tiles') {
@@ -1168,6 +1169,122 @@ function renderBrowser() {
                 renderView(allItems);
             }
         });
+    });
+
+    // ── Keyboard Shortcuts ─────────────────────────────────────────────────
+
+    var kbFocusIndex = -1;
+
+    function setKbFocus(idx) {
+        var rows = document.querySelectorAll('#file-table .file-row');
+        // Remove old focus
+        rows.forEach(function(r) { r.classList.remove('kb-focused'); });
+        if (idx < 0 || idx >= rows.length) { kbFocusIndex = -1; return; }
+        kbFocusIndex = idx;
+        var row = rows[idx];
+        row.classList.add('kb-focused');
+        // Scroll into view
+        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function browserKeyHandler(e) {
+        // Skip if user is typing in an input/textarea
+        var tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+        // Skip if modal is open
+        if (document.querySelector('.modal-overlay')) return;
+
+        var rows = document.querySelectorAll('#file-table .file-row');
+
+        // Ctrl+A / Cmd+A — select all
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+            e.preventDefault();
+            rows.forEach(function(row) {
+                selectedPaths[row.getAttribute('data-path')] = true;
+            });
+            syncCheckboxes();
+            updateBatchToolbar();
+            return;
+        }
+
+        // Escape — clear selection & focus
+        if (e.key === 'Escape') {
+            if (selectionCount() > 0) {
+                clearSelection();
+                syncCheckboxes();
+            }
+            setKbFocus(-1);
+            return;
+        }
+
+        // Delete — delete selected
+        if (e.key === 'Delete' && selectionCount() > 0) {
+            e.preventDefault();
+            batchDelete();
+            return;
+        }
+
+        // F2 — rename focused item
+        if (e.key === 'F2' && kbFocusIndex >= 0 && kbFocusIndex < rows.length) {
+            e.preventDefault();
+            var path = rows[kbFocusIndex].getAttribute('data-path');
+            startInlineRename(path);
+            return;
+        }
+
+        // Arrow Down — move focus down
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            var next = kbFocusIndex + 1;
+            if (next < rows.length) setKbFocus(next);
+            else if (rows.length > 0 && kbFocusIndex < 0) setKbFocus(0);
+            return;
+        }
+
+        // Arrow Up — move focus up
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (kbFocusIndex > 0) setKbFocus(kbFocusIndex - 1);
+            return;
+        }
+
+        // Space — toggle selection on focused item
+        if (e.key === ' ' && kbFocusIndex >= 0 && kbFocusIndex < rows.length) {
+            e.preventDefault();
+            var focusedPath = rows[kbFocusIndex].getAttribute('data-path');
+            if (selectedPaths[focusedPath]) {
+                delete selectedPaths[focusedPath];
+            } else {
+                selectedPaths[focusedPath] = true;
+            }
+            syncCheckboxes();
+            updateBatchToolbar();
+            return;
+        }
+
+        // Enter — open focused item
+        if (e.key === 'Enter' && kbFocusIndex >= 0 && kbFocusIndex < rows.length) {
+            e.preventDefault();
+            var focusedRow = rows[kbFocusIndex];
+            var focusedPath = focusedRow.getAttribute('data-path');
+            var isDir = focusedRow.getAttribute('data-isdir') === '1';
+            if (isDir) {
+                window.location.hash = '#browser' + focusedPath;
+            } else {
+                window.location.hash = '#viewer' + focusedPath;
+            }
+            return;
+        }
+    }
+
+    document.addEventListener('keydown', browserKeyHandler);
+
+    // Clean up handler when leaving browser view (SPA navigation)
+    window.addEventListener('hashchange', function browserCleanup() {
+        if (!window.location.hash.startsWith('#browser')) {
+            document.removeEventListener('keydown', browserKeyHandler);
+            window.removeEventListener('hashchange', browserCleanup);
+        }
     });
 
     // Global search
