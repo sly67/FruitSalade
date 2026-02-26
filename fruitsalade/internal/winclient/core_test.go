@@ -165,7 +165,7 @@ func TestMetadataMethods(t *testing.T) {
 
 	// Test UpdateMetadataNode
 	now := time.Now()
-	core.UpdateMetadataNode("/docs/readme.txt", 999, "newhash", now)
+	core.UpdateMetadataNode("/docs/readme.txt", 999, "newhash", now, 1)
 	if node := core.FindByPath("/docs/readme.txt"); node.Size != 999 || node.Hash != "newhash" {
 		t.Errorf("UpdateMetadataNode: size=%d hash=%s", node.Size, node.Hash)
 	}
