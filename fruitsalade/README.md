@@ -65,6 +65,7 @@ This is the main application directory containing the server, clients, and all i
 - [x] S3/MinIO, local filesystem, SMB backends
 - [x] Per-group storage locations via storage router
 - [x] Admin API and UI for managing storage locations
+- [x] Read-only storage locations (browse/download only, no uploads or modifications)
 
 ### Windows Client
 - [x] CfAPI + cgofuse dual backend

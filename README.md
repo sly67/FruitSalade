@@ -15,7 +15,7 @@ Files appear instantly in the filesystem via FUSE, but content is fetched from t
 - **Conflict detection** -- optimistic locking via `X-Expected-Version` / `If-Match` headers
 - **JWT authentication** -- per-device tokens with revocation support
 - **Observability** -- Prometheus metrics + structured JSON logging (zap)
-- **Multi-backend storage** -- S3/MinIO, local filesystem, and SMB backends with per-group storage locations
+- **Multi-backend storage** -- S3/MinIO, local filesystem, and SMB backends with per-group storage locations and read-only mode
 - **File sharing** -- ACL-based permissions with path inheritance + share links (password, expiry, download limits)
 - **Rate limiting & quotas** -- per-user storage, bandwidth, RPM, and upload size limits
 - **Web app** -- embedded file browser and admin dashboard at `/app/` with dark mode, batch actions, user/group/storage management, notification center, and WCAG accessibility
