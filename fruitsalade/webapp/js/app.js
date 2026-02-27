@@ -15,6 +15,7 @@
         'gallery':          renderGallery,
         'gallery-plugins':  renderGalleryPlugins,
         'share':            renderShareDownload,
+        'activity':         renderActivity,
         'trash':            renderTrash,
         'search':           renderSearch,
         'favorites':        renderFavorites,

@@ -364,6 +364,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /api/v1/bulk/copy", s.handleBulkCopy)
 	protected.HandleFunc("POST /api/v1/bulk/share", s.handleBulkShare)
 	protected.HandleFunc("POST /api/v1/bulk/tag", s.handleBulkTag)
+	protected.HandleFunc("POST /api/v1/bulk/album-add", s.handleBulkAlbumAdd)
 
 	// File properties endpoint
 	protected.HandleFunc("GET /api/v1/properties/{path...}", s.handleFileProperties)
@@ -387,6 +388,9 @@ func (s *Server) Handler() http.Handler {
 
 	// User usage endpoint
 	protected.HandleFunc("GET /api/v1/usage", s.handleGetUsage)
+
+	// Activity feed endpoint
+	protected.HandleFunc("GET /api/v1/activity", s.handleActivity)
 
 	// User dashboard endpoint
 	protected.HandleFunc("GET /api/v1/user/dashboard", s.handleUserDashboard)
@@ -458,18 +462,27 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// publishEvent publishes an event to the broadcaster if available.
-func (s *Server) publishEvent(eventType, path string, version int, hash string, size int64) {
-	if s.broadcaster == nil {
-		return
+// publishEvent publishes an event to the broadcaster and persists to activity_log.
+func (s *Server) publishEvent(eventType, path string, version int, hash string, size int64, userID int, username string) {
+	if s.broadcaster != nil {
+		s.broadcaster.Publish(events.Event{
+			Type:     eventType,
+			Path:     path,
+			Version:  version,
+			Hash:     hash,
+			Size:     size,
+			UserID:   userID,
+			Username: username,
+		})
 	}
-	s.broadcaster.Publish(events.Event{
-		Type:    eventType,
-		Path:    path,
-		Version: version,
-		Hash:    hash,
-		Size:    size,
-	})
+
+	// Persist to activity_log
+	db := s.metadata.DB()
+	db.ExecContext(context.Background(),
+		`INSERT INTO activity_log (user_id, username, action, resource_path, details)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		userID, username, eventType, path,
+		fmt.Sprintf(`{"version":%d,"size":%d}`, version, size))
 }
 
 // ─── Tree ───────────────────────────────────────────────────────────────────
@@ -960,7 +973,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if existingRow != nil {
 		eventType = events.EventModify
 	}
-	s.publishEvent(eventType, path, newVersion, hashStr, int64(len(content)))
+	var eventUserID int
+	var eventUsername string
+	if claims != nil {
+		eventUserID = claims.UserID
+		eventUsername = claims.Username
+	}
+	s.publishEvent(eventType, path, newVersion, hashStr, int64(len(content)), eventUserID, eventUsername)
 
 	// Gallery: enqueue image processing if applicable
 	if s.processor != nil && gallery.IsImageFile(path) {
@@ -1030,7 +1049,13 @@ func (s *Server) handleCreateOrUpdate(w http.ResponseWriter, r *http.Request) {
 
 		logging.Info("directory created", zap.String("path", path))
 
-		s.publishEvent(events.EventCreate, path, 0, "", 0)
+		var dirUserID int
+		var dirUsername string
+		if claims != nil {
+			dirUserID = claims.UserID
+			dirUsername = claims.Username
+		}
+		s.publishEvent(events.EventCreate, path, 0, "", 0, dirUserID, dirUsername)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -1091,7 +1116,11 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 	logging.Info("file moved to trash", zap.String("path", path))
 
-	s.publishEvent(events.EventDelete, path, 0, "", 0)
+	var delUsername string
+	if claims != nil {
+		delUsername = claims.Username
+	}
+	s.publishEvent(events.EventDelete, path, 0, "", 0, userID, delUsername)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1249,7 +1278,14 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		zap.Int("to_version", req.Version),
 		zap.Int("new_version", newVersion))
 
-	s.publishEvent(events.EventVersion, path, newVersion, "", 0)
+	rbClaims := auth.GetClaims(r.Context())
+	var rbUserID int
+	var rbUsername string
+	if rbClaims != nil {
+		rbUserID = rbClaims.UserID
+		rbUsername = rbClaims.Username
+	}
+	s.publishEvent(events.EventVersion, path, newVersion, "", 0, rbUserID, rbUsername)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1787,6 +1823,17 @@ func (s *Server) handleUserDashboard(w http.ResponseWriter, r *http.Request) {
 		`SELECT COUNT(*) FROM share_links WHERE created_by = $1 AND is_active = TRUE`,
 		claims.UserID).Scan(&shareLinkCount)
 
+	// Bandwidth history (7 days)
+	bwHistory, _ := s.quotaStore.GetBandwidthHistory(ctx, claims.UserID, 7)
+	var protoHistory []protocol.BandwidthHistoryPoint
+	for _, pt := range bwHistory {
+		protoHistory = append(protoHistory, protocol.BandwidthHistoryPoint{
+			Date:     pt.Date,
+			BytesIn:  pt.BytesIn,
+			BytesOut: pt.BytesOut,
+		})
+	}
+
 	resp := protocol.UserDashboardResponse{
 		UserID:         claims.UserID,
 		Username:       claims.Username,
@@ -1799,13 +1846,57 @@ func (s *Server) handleUserDashboard(w http.ResponseWriter, r *http.Request) {
 			MaxRequestsPerMin:  q.MaxRequestsPerMin,
 			MaxUploadSizeBytes: q.MaxUploadSizeBytes,
 		},
-		Groups:         groups,
-		FileCount:      fileCount,
-		ShareLinkCount: shareLinkCount,
+		Groups:           groups,
+		FileCount:        fileCount,
+		ShareLinkCount:   shareLinkCount,
+		BandwidthHistory: protoHistory,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// ─── Activity Feed ───────────────────────────────────────────────────────────
+
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if v, err := strconv.Atoi(limitStr); err == nil && v > 0 && v <= 200 {
+			limit = v
+		}
+	}
+
+	var before *time.Time
+	if beforeStr := r.URL.Query().Get("before"); beforeStr != "" {
+		if t, err := time.Parse(time.RFC3339, beforeStr); err == nil {
+			before = &t
+		}
+	}
+
+	var entries []postgres.ActivityEntry
+	var err error
+	if claims.IsAdmin {
+		entries, err = s.metadata.GetActivity(r.Context(), limit, before)
+	} else {
+		entries, err = s.metadata.GetUserActivity(r.Context(), claims.UserID, limit, before)
+	}
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, "failed to get activity: "+err.Error())
+		return
+	}
+	if entries == nil {
+		entries = []postgres.ActivityEntry{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
 }
 
 // ─── File Properties ────────────────────────────────────────────────────────

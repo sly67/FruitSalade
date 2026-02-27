@@ -468,6 +468,53 @@ func (s *Server) handleBulkShare(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (s *Server) handleBulkAlbumAdd(w http.ResponseWriter, r *http.Request) {
+	claims := auth.GetClaims(r.Context())
+	if claims == nil {
+		s.sendError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req protocol.BulkAlbumAddRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Paths) == 0 || req.AlbumID == 0 {
+		s.sendError(w, http.StatusBadRequest, "paths and album_id required")
+		return
+	}
+
+	if s.galleryStore == nil {
+		s.sendError(w, http.StatusNotImplemented, "gallery not enabled")
+		return
+	}
+
+	// Verify album ownership
+	album, err := s.galleryStore.GetAlbum(r.Context(), req.AlbumID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, "album not found")
+		return
+	}
+	if album.UserID != claims.UserID && !claims.IsAdmin {
+		s.sendError(w, http.StatusForbidden, "album not owned by user")
+		return
+	}
+
+	resp := protocol.BulkResponse{}
+	for _, path := range req.Paths {
+		if err := s.galleryStore.AddImageToAlbum(r.Context(), req.AlbumID, path); err != nil {
+			resp.Failed++
+			resp.Errors = append(resp.Errors, path+": "+err.Error())
+		} else {
+			resp.Succeeded++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func (s *Server) handleBulkTag(w http.ResponseWriter, r *http.Request) {
 	claims := auth.GetClaims(r.Context())
 	if claims == nil {

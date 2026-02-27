@@ -188,6 +188,54 @@ func (s *QuotaStore) CheckBandwidthQuota(ctx context.Context, userID int, additi
 	return totalToday+additionalBytes <= q.MaxBandwidthPerDay, nil
 }
 
+// BandwidthHistoryPoint is a single day's bandwidth usage.
+type BandwidthHistoryPoint struct {
+	Date     string `json:"date"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
+}
+
+// GetBandwidthHistory returns daily bandwidth usage for the last N days, filling zero-days.
+func (s *QuotaStore) GetBandwidthHistory(ctx context.Context, userID, days int) ([]BandwidthHistoryPoint, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT date, bytes_in, bytes_out
+		 FROM bandwidth_usage
+		 WHERE user_id = $1 AND date >= CURRENT_DATE - $2::int
+		 ORDER BY date ASC`, userID, days-1)
+	if err != nil {
+		return nil, fmt.Errorf("get bandwidth history: %w", err)
+	}
+	defer rows.Close()
+
+	byDate := make(map[string]BandwidthHistoryPoint)
+	for rows.Next() {
+		var d time.Time
+		var bIn, bOut int64
+		if err := rows.Scan(&d, &bIn, &bOut); err != nil {
+			return nil, err
+		}
+		key := d.Format("2006-01-02")
+		byDate[key] = BandwidthHistoryPoint{Date: key, BytesIn: bIn, BytesOut: bOut}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Fill zero-days
+	now := time.Now()
+	result := make([]BandwidthHistoryPoint, days)
+	for i := 0; i < days; i++ {
+		d := now.AddDate(0, 0, -(days-1-i))
+		key := d.Format("2006-01-02")
+		if pt, ok := byDate[key]; ok {
+			result[i] = pt
+		} else {
+			result[i] = BandwidthHistoryPoint{Date: key}
+		}
+	}
+	return result, nil
+}
+
 // CleanupOldBandwidth removes bandwidth records older than the given duration.
 func (s *QuotaStore) CleanupOldBandwidth(ctx context.Context, olderThan time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-olderThan)

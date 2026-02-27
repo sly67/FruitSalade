@@ -124,6 +124,14 @@ function renderOverviewContent(container, data) {
         '</div>' +
     '</div>';
 
+    // Bandwidth history chart (7 days)
+    if (data.bandwidth_history && data.bandwidth_history.length > 0) {
+        html += '<div class="dashboard-section">' +
+            '<h3>Bandwidth (Last 7 Days)</h3>' +
+            '<canvas id="chart-bw-history" class="chart-canvas" width="500" height="220"></canvas>' +
+        '</div>';
+    }
+
     // Groups
     html += '<div class="dashboard-section">' +
         '<h3>My Groups</h3>';
@@ -144,6 +152,113 @@ function renderOverviewContent(container, data) {
 
     html += '</div>';
     container.innerHTML = html;
+
+    // Draw bandwidth history stacked bar chart
+    if (data.bandwidth_history && data.bandwidth_history.length > 0) {
+        drawBandwidthChart('chart-bw-history', data.bandwidth_history);
+    }
+}
+
+function drawBandwidthChart(canvasId, history) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    var w = canvas.clientWidth;
+    var h = canvas.clientHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+
+    var textColor = getChartTextColor();
+    var borderColor = getChartBorderColor();
+    var uploadColor = '#2563EB';
+    var downloadColor = '#16A34A';
+
+    var padding = { top: 20, right: 20, bottom: 40, left: 70 };
+    var chartW = w - padding.left - padding.right;
+    var chartH = h - padding.top - padding.bottom;
+    var n = history.length;
+    var barGap = 8;
+    var barW = Math.min(40, (chartW - barGap * (n + 1)) / n);
+
+    // Find max total
+    var maxVal = 0;
+    for (var i = 0; i < n; i++) {
+        var total = (history[i].bytes_in || 0) + (history[i].bytes_out || 0);
+        if (total > maxVal) maxVal = total;
+    }
+    if (maxVal === 0) maxVal = 1;
+
+    // Grid lines
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = 0.5;
+    for (var g = 0; g <= 4; g++) {
+        var gy = padding.top + chartH - (g / 4) * chartH;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, gy);
+        ctx.lineTo(padding.left + chartW, gy);
+        ctx.stroke();
+
+        ctx.fillStyle = textColor;
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(formatBytes((g / 4) * maxVal), padding.left - 6, gy);
+    }
+
+    // Bars
+    for (var i = 0; i < n; i++) {
+        var bIn = history[i].bytes_in || 0;
+        var bOut = history[i].bytes_out || 0;
+        var totalH = ((bIn + bOut) / maxVal) * chartH;
+        var upH = (bIn / maxVal) * chartH;
+        var downH = (bOut / maxVal) * chartH;
+
+        var x = padding.left + barGap + i * (barW + barGap);
+        var baseY = padding.top + chartH;
+
+        // Download bar (green, bottom)
+        if (downH > 0) {
+            ctx.fillStyle = downloadColor;
+            ctx.beginPath();
+            roundRect(ctx, x, baseY - downH, barW, downH, 3);
+            ctx.fill();
+        }
+
+        // Upload bar (blue, stacked on top)
+        if (upH > 0) {
+            ctx.fillStyle = uploadColor;
+            ctx.beginPath();
+            roundRect(ctx, x, baseY - downH - upH, barW, upH, 3);
+            ctx.fill();
+        }
+
+        // X-axis label (day name)
+        ctx.fillStyle = textColor;
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        var dateLabel = history[i].date ? history[i].date.substring(5) : '';
+        ctx.fillText(dateLabel, x + barW / 2, padding.top + chartH + 6);
+    }
+
+    // Legend
+    ctx.font = '11px -apple-system, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    var legendX = padding.left;
+    var legendY = padding.top + chartH + 24;
+
+    ctx.fillStyle = uploadColor;
+    ctx.fillRect(legendX, legendY - 5, 12, 10);
+    ctx.fillStyle = textColor;
+    ctx.fillText('Upload', legendX + 16, legendY);
+
+    ctx.fillStyle = downloadColor;
+    ctx.fillRect(legendX + 80, legendY - 5, 12, 10);
+    ctx.fillStyle = textColor;
+    ctx.fillText('Download', legendX + 96, legendY);
 }
 
 // ─── Security Tab ─────────────────────────────────────────────────────────────

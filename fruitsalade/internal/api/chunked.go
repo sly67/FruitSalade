@@ -444,7 +444,7 @@ func (m *ChunkedUploadManager) handleCompleteUpload(w http.ResponseWriter, r *ht
 	if existingRow != nil {
 		eventType = events.EventModify
 	}
-	m.server.publishEvent(eventType, path, newVersion, hashStr, fileSize)
+	m.server.publishEvent(eventType, path, newVersion, hashStr, fileSize, claims.UserID, claims.Username)
 
 	// Gallery processing
 	if m.server.processor != nil && gallery.IsImageFile(path) {

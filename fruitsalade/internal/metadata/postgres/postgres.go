@@ -1263,3 +1263,70 @@ func normalizePath(path string) string {
 	}
 	return strings.TrimSuffix(path, "/")
 }
+
+// ─── Activity Log ───────────────────────────────────────────────────────────
+
+// ActivityEntry represents a single activity log entry.
+type ActivityEntry struct {
+	ID           int64     `json:"id"`
+	UserID       int       `json:"user_id"`
+	Username     string    `json:"username"`
+	Action       string    `json:"action"`
+	ResourcePath string    `json:"resource_path"`
+	Details      string    `json:"details"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// GetActivity returns recent activity entries (all users, for admins).
+func (s *Store) GetActivity(ctx context.Context, limit int, before *time.Time) ([]ActivityEntry, error) {
+	var query string
+	var args []interface{}
+
+	if before != nil {
+		query = `SELECT id, COALESCE(user_id, 0), username, action, resource_path, COALESCE(details::text, '{}'), created_at
+		         FROM activity_log WHERE created_at < $1 ORDER BY created_at DESC LIMIT $2`
+		args = []interface{}{*before, limit}
+	} else {
+		query = `SELECT id, COALESCE(user_id, 0), username, action, resource_path, COALESCE(details::text, '{}'), created_at
+		         FROM activity_log ORDER BY created_at DESC LIMIT $1`
+		args = []interface{}{limit}
+	}
+
+	return s.queryActivity(ctx, query, args...)
+}
+
+// GetUserActivity returns recent activity entries for a specific user.
+func (s *Store) GetUserActivity(ctx context.Context, userID, limit int, before *time.Time) ([]ActivityEntry, error) {
+	var query string
+	var args []interface{}
+
+	if before != nil {
+		query = `SELECT id, COALESCE(user_id, 0), username, action, resource_path, COALESCE(details::text, '{}'), created_at
+		         FROM activity_log WHERE user_id = $1 AND created_at < $2 ORDER BY created_at DESC LIMIT $3`
+		args = []interface{}{userID, *before, limit}
+	} else {
+		query = `SELECT id, COALESCE(user_id, 0), username, action, resource_path, COALESCE(details::text, '{}'), created_at
+		         FROM activity_log WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`
+		args = []interface{}{userID, limit}
+	}
+
+	return s.queryActivity(ctx, query, args...)
+}
+
+func (s *Store) queryActivity(ctx context.Context, query string, args ...interface{}) ([]ActivityEntry, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query activity: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []ActivityEntry
+	for rows.Next() {
+		var e ActivityEntry
+		if err := rows.Scan(&e.ID, &e.UserID, &e.Username, &e.Action, &e.ResourcePath, &e.Details, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}

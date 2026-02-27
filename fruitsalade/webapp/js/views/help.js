@@ -1,5 +1,5 @@
 // ─── Help / Wiki View ─────────────────────────────────────────────────────
-// Embedded documentation wiki with 12 categories, ToC sidebar, search,
+// Embedded documentation wiki with categories, ToC sidebar, search,
 // scroll-spy, and cross-article navigation.
 
 var HELP_CATEGORIES = [
@@ -9,6 +9,7 @@ var HELP_CATEGORIES = [
     { id: 'sharing',         label: 'Sharing' },
     { id: 'gallery',         label: 'Gallery' },
     { id: 'favorites-trash', label: 'Favorites & Trash' },
+    { id: 'activity',        label: 'Activity' },
     { id: 'groups',          label: 'Groups' },
     { id: 'security',        label: 'Security' },
     { id: 'clients',         label: 'Clients' },
@@ -56,6 +57,7 @@ var HELP_ARTICLES = [
             '<h4>Sections</h4>' +
             '<ul>' +
                 '<li><strong>Quick Stats</strong> &mdash; Total files, storage used, recent uploads</li>' +
+                '<li><strong>Bandwidth (Last 7 Days)</strong> &mdash; Stacked bar chart showing daily upload and download bandwidth</li>' +
                 '<li><strong>Recent Activity</strong> &mdash; Last uploaded or modified files</li>' +
                 '<li><strong>Security</strong> &mdash; 2FA status, active sessions, password change</li>' +
                 '<li><strong>Storage Analytics</strong> &mdash; Charts showing usage by type, growth over time (admin)</li>' +
@@ -316,7 +318,16 @@ var HELP_ARTICLES = [
                 '<li><strong>Timeline</strong> &mdash; Organized by date</li>' +
                 '<li><strong>Map</strong> &mdash; Geolocated photos on a world map</li>' +
             '</ul>' +
-            '<p>Use the tabs at the top to switch between modes. Filters for tags and albums help narrow results.</p>'
+            '<p>Use the tabs at the top to switch between modes. Filters for tags and albums help narrow results.</p>' +
+            '<h4>Batch Selection</h4>' +
+            '<p>Select multiple photos for bulk operations:</p>' +
+            '<ul>' +
+                '<li>Hover a thumbnail and click the checkbox to select it</li>' +
+                '<li>In list mode, use the checkbox column</li>' +
+                '<li>Press <kbd>Ctrl</kbd>+<kbd>A</kbd> to select all visible photos</li>' +
+                '<li>Press <kbd>Escape</kbd> to deselect all</li>' +
+            '</ul>' +
+            '<p>When photos are selected, a batch toolbar appears with <strong>Tag</strong> and <strong>Add to Album</strong> actions.</p>'
     },
     {
         id: 'gallery-lightbox',
@@ -380,9 +391,10 @@ var HELP_ARTICLES = [
         body:
             '<p>The Map view shows geolocated photos on an interactive world map.</p>' +
             '<ul>' +
-                '<li>Photos with GPS EXIF data appear as markers</li>' +
-                '<li>Nearby photos are clustered; zoom in to expand clusters</li>' +
-                '<li>Click a marker to see a thumbnail popup; click through to the lightbox</li>' +
+                '<li>Photos with GPS EXIF data appear as circular thumbnail markers</li>' +
+                '<li>Nearby photos are grouped into 2&times;2 thumbnail grid clusters with a count badge</li>' +
+                '<li>Zoom in to expand clusters into individual markers</li>' +
+                '<li>Click a marker to see a popup with a larger preview; click through to the lightbox</li>' +
             '</ul>'
     },
     {
@@ -397,6 +409,19 @@ var HELP_ARTICLES = [
                 '<li>Configure share options (password, expiry, max downloads)</li>' +
                 '<li>Copy the generated share link</li>' +
             '</ol>'
+    },
+
+    {
+        id: 'gallery-batch',
+        category: 'gallery',
+        title: 'Batch Operations',
+        body:
+            '<p>Select multiple gallery photos to apply bulk actions.</p>' +
+            '<h4>Batch Tag</h4>' +
+            '<p>Click <strong>Tag</strong> in the batch toolbar to add tags to all selected photos at once. Enter comma-separated tags or click existing tag suggestions.</p>' +
+            '<h4>Add to Album</h4>' +
+            '<p>Click <strong>Add to Album</strong> to add all selected photos to one of your albums. Choose from the dropdown and confirm.</p>' +
+            '<div class="wiki-tip">Use <kbd>Ctrl</kbd>+<kbd>A</kbd> to quickly select all visible photos, then batch tag or add to album.</div>'
     },
 
     // ── Favorites & Trash ────────────────────────────────────────────────
@@ -439,6 +464,35 @@ var HELP_ARTICLES = [
                 '<li><strong>Delete Permanently</strong> &mdash; Removes the file forever</li>' +
                 '<li><strong>Empty Trash</strong> &mdash; Purges all trashed items</li>' +
             '</ul>'
+    },
+
+    // ── Activity ──────────────────────────────────────────────────────────
+    {
+        id: 'activity-feed',
+        category: 'activity',
+        title: 'Activity Feed',
+        body:
+            '<p>The <strong>Activity</strong> view shows a timeline of file operations across your library.</p>' +
+            '<h4>What is Tracked</h4>' +
+            '<ul>' +
+                '<li><strong>Created</strong> &mdash; New file uploads</li>' +
+                '<li><strong>Modified</strong> &mdash; File updates and overwrites</li>' +
+                '<li><strong>Deleted</strong> &mdash; Files moved to trash</li>' +
+                '<li><strong>Rolled back</strong> &mdash; Version restores</li>' +
+            '</ul>' +
+            '<p>Each entry shows who performed the action, the file path, and the timestamp.</p>'
+    },
+    {
+        id: 'activity-access',
+        category: 'activity',
+        title: 'Access Control',
+        body:
+            '<p>Activity visibility depends on your role:</p>' +
+            '<ul>' +
+                '<li><strong>Admin</strong> &mdash; Sees all activity across all users</li>' +
+                '<li><strong>Regular user</strong> &mdash; Sees only their own file operations</li>' +
+            '</ul>' +
+            '<p>Use the <strong>Load More</strong> button to page through older entries (50 per page).</p>'
     },
 
     // ── Groups ───────────────────────────────────────────────────────────
@@ -772,6 +826,7 @@ var HELP_ARTICLES = [
                 '<li><strong>Top Users</strong> &mdash; Storage consumption by user</li>' +
                 '<li><strong>Storage Growth</strong> &mdash; Cumulative storage over time</li>' +
             '</ul>' +
+            '<p>All users also see a 7-day <strong>Bandwidth History</strong> stacked bar chart showing daily upload (blue) and download (green) usage on their dashboard.</p>' +
             '<p>Prometheus metrics are also exported at <code>/metrics</code> for external monitoring with Grafana.</p>'
     },
     {
@@ -898,6 +953,8 @@ var HELP_ARTICLES = [
                 '<tr><td><code>/api/v1/gallery</code></td><td>Gallery (tags, albums, EXIF)</td></tr>' +
                 '<tr><td><code>/api/v1/groups</code></td><td>Group management</td></tr>' +
                 '<tr><td><code>/api/v1/users</code></td><td>User management (admin)</td></tr>' +
+                '<tr><td><code>/api/v1/activity</code></td><td>Activity feed (file operation history)</td></tr>' +
+                '<tr><td><code>/api/v1/bulk</code></td><td>Bulk operations (tag, album-add)</td></tr>' +
                 '<tr><td><code>/api/v1/events</code></td><td>SSE real-time events</td></tr>' +
                 '<tr><td><code>/api/v1/totp</code></td><td>2FA / TOTP management</td></tr>' +
                 '<tr><td><code>/health</code></td><td>Health check</td></tr>' +
@@ -1181,12 +1238,13 @@ var HELP_ARTICLES = [
         category: 'shortcuts',
         title: 'Gallery &amp; Lightbox',
         body:
-            '<p>Shortcuts for the gallery lightbox (fullscreen photo viewer):</p>' +
+            '<p>Shortcuts for the gallery and lightbox:</p>' +
             '<table>' +
                 '<tr><th>Shortcut</th><th>Action</th></tr>' +
-                '<tr><td><kbd>&larr;</kbd> Arrow Left</td><td>Previous photo</td></tr>' +
-                '<tr><td><kbd>&rarr;</kbd> Arrow Right</td><td>Next photo</td></tr>' +
-                '<tr><td><kbd>Escape</kbd></td><td>Close the lightbox</td></tr>' +
+                '<tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select all visible photos</td></tr>' +
+                '<tr><td><kbd>Escape</kbd></td><td>Deselect all / close lightbox</td></tr>' +
+                '<tr><td><kbd>&larr;</kbd> Arrow Left</td><td>Previous photo (lightbox)</td></tr>' +
+                '<tr><td><kbd>&rarr;</kbd> Arrow Right</td><td>Next photo (lightbox)</td></tr>' +
                 '<tr><td><kbd>Enter</kbd></td><td>Submit tag in the tag input field</td></tr>' +
             '</table>' +
             '<div class="wiki-tip">On touch devices, swipe left/right to navigate between photos.</div>'

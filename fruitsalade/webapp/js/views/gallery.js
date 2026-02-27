@@ -40,6 +40,83 @@ function renderGallery() {
     var activeAlbumName = '';
     var allTags = null;
 
+    // Selection state for batch operations
+    var gallerySelected = {};
+
+    function gallerySelectionCount() {
+        return Object.keys(gallerySelected).length;
+    }
+
+    function clearGallerySelection() {
+        gallerySelected = {};
+        syncGalleryCheckboxes();
+        updateBatchToolbar();
+    }
+
+    function toggleGallerySelect(path) {
+        if (gallerySelected[path]) {
+            delete gallerySelected[path];
+        } else {
+            gallerySelected[path] = true;
+        }
+        syncGalleryCheckboxes();
+        updateBatchToolbar();
+    }
+
+    function syncGalleryCheckboxes() {
+        var checkboxes = document.querySelectorAll('.gallery-select-cb');
+        for (var i = 0; i < checkboxes.length; i++) {
+            var path = checkboxes[i].getAttribute('data-path');
+            checkboxes[i].checked = !!gallerySelected[path];
+        }
+        // Update grid item selected class
+        var gridItems = document.querySelectorAll('.gallery-grid-item');
+        for (var i = 0; i < gridItems.length; i++) {
+            var path = gridItems[i].getAttribute('data-path');
+            if (gallerySelected[path]) {
+                gridItems[i].classList.add('gallery-selected');
+            } else {
+                gridItems[i].classList.remove('gallery-selected');
+            }
+        }
+        // Update list rows
+        var rows = document.querySelectorAll('.gallery-list-row');
+        for (var i = 0; i < rows.length; i++) {
+            var path = rows[i].getAttribute('data-path');
+            if (gallerySelected[path]) {
+                rows[i].classList.add('gallery-selected');
+            } else {
+                rows[i].classList.remove('gallery-selected');
+            }
+        }
+    }
+
+    function updateBatchToolbar() {
+        var count = gallerySelectionCount();
+        var existing = document.getElementById('gallery-batch-toolbar');
+        if (count === 0) {
+            if (existing) existing.remove();
+            return;
+        }
+        if (!existing) {
+            existing = document.createElement('div');
+            existing.id = 'gallery-batch-toolbar';
+            existing.className = 'gallery-batch-toolbar';
+            var status = document.getElementById('gallery-status');
+            if (status) {
+                status.parentNode.insertBefore(existing, status.nextSibling);
+            }
+        }
+        existing.innerHTML =
+            '<span class="gallery-batch-count">' + count + ' selected</span>' +
+            '<button class="btn btn-sm" id="gallery-batch-tag">Tag</button>' +
+            '<button class="btn btn-sm" id="gallery-batch-album">Add to Album</button>' +
+            '<button class="btn btn-sm btn-outline" id="gallery-batch-deselect">Deselect All</button>';
+        document.getElementById('gallery-batch-tag').addEventListener('click', showBatchTagModal);
+        document.getElementById('gallery-batch-album').addEventListener('click', showBatchAlbumModal);
+        document.getElementById('gallery-batch-deselect').addEventListener('click', clearGallerySelection);
+    }
+
     // ── Render Shell ─────────────────────────────────────────────────────────
     app.innerHTML =
         '<div class="toolbar">' +
@@ -385,11 +462,26 @@ function renderGallery() {
             var thumbWrap = document.createElement('div');
             thumbWrap.className = 'gallery-grid-thumb';
 
+            // Selection checkbox overlay
+            var selOverlay = document.createElement('label');
+            selOverlay.className = 'gallery-select-overlay';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'gallery-select-cb row-checkbox';
+            cb.setAttribute('data-path', item.file_path);
+            cb.checked = !!gallerySelected[item.file_path];
+            selOverlay.appendChild(cb);
+            thumbWrap.appendChild(selOverlay);
+
             var img = document.createElement('img');
             img.alt = esc(item.file_name);
             img.setAttribute('loading', 'lazy');
             thumbWrap.appendChild(img);
             el.appendChild(thumbWrap);
+
+            if (gallerySelected[item.file_path]) {
+                el.classList.add('gallery-selected');
+            }
 
             if (viewMode === 'grid-ext') {
                 var caption = document.createElement('div');
@@ -423,12 +515,24 @@ function renderGallery() {
                 img.className = 'gallery-no-thumb';
             }
 
-            // Click handler
-            (function(idx) {
-                el.addEventListener('click', function() {
-                    openLightbox(idx);
+            // Click handler — checkbox click toggles selection, normal click opens lightbox
+            (function(idx, itemEl, itemPath) {
+                var cbEl = itemEl.querySelector('.gallery-select-cb');
+                if (cbEl) {
+                    cbEl.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        toggleGallerySelect(itemPath);
+                    });
+                }
+                itemEl.addEventListener('click', function(e) {
+                    if (e.target.classList.contains('gallery-select-cb')) return;
+                    if (gallerySelectionCount() > 0) {
+                        toggleGallerySelect(itemPath);
+                    } else {
+                        openLightbox(idx);
+                    }
                 });
-            })(i);
+            })(i, el, item.file_path);
         }
 
         if (items.length === 0 && !append) {
@@ -445,6 +549,7 @@ function renderGallery() {
             container.className = 'gallery-list';
             container.innerHTML =
                 '<table class="responsive-table gallery-table"><thead><tr>' +
+                    '<th class="gallery-select-col"></th>' +
                     '<th class="gallery-thumb-col">Thumb</th>' +
                     '<th>Name</th>' +
                     '<th>Date</th>' +
@@ -464,6 +569,21 @@ function renderGallery() {
             tr.className = 'gallery-list-row';
             tr.setAttribute('data-path', item.file_path);
             tr.setAttribute('data-index', String(i));
+
+            // Selection checkbox cell
+            var tdCheck = document.createElement('td');
+            tdCheck.className = 'gallery-select-col';
+            var listCb = document.createElement('input');
+            listCb.type = 'checkbox';
+            listCb.className = 'gallery-select-cb row-checkbox';
+            listCb.setAttribute('data-path', item.file_path);
+            listCb.checked = !!gallerySelected[item.file_path];
+            tdCheck.appendChild(listCb);
+            tr.appendChild(tdCheck);
+
+            if (gallerySelected[item.file_path]) {
+                tr.classList.add('gallery-selected');
+            }
 
             // Thumbnail cell
             var tdThumb = document.createElement('td');
@@ -509,12 +629,24 @@ function renderGallery() {
                 loadThumb(img, item.file_path);
             }
 
-            // Click handler
-            (function(idx) {
-                tr.addEventListener('click', function() {
-                    openLightbox(idx);
+            // Click handler — checkbox click toggles selection, normal click opens lightbox
+            (function(idx, rowEl, itemPath) {
+                var rowCb = rowEl.querySelector('.gallery-select-cb');
+                if (rowCb) {
+                    rowCb.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        toggleGallerySelect(itemPath);
+                    });
+                }
+                rowEl.addEventListener('click', function(e) {
+                    if (e.target.classList.contains('gallery-select-cb')) return;
+                    if (gallerySelectionCount() > 0) {
+                        toggleGallerySelect(itemPath);
+                    } else {
+                        openLightbox(idx);
+                    }
                 });
-            })(i);
+            })(i, tr, item.file_path);
         }
 
         if (items.length === 0 && !append) {
@@ -993,11 +1125,77 @@ function renderGallery() {
             return;
         }
 
+        var token = API.getToken();
+
+        // Build a thumbnail URL for a point
+        function thumbURL(filePath) {
+            return '/api/v1/gallery/thumb/' + API.encodeURIPath(filePath.replace(/^\//, '')) +
+                '?token=' + encodeURIComponent(token);
+        }
+
+        // Custom cluster icon: 2x2 thumbnail grid + count badge
+        function createClusterIcon(cluster) {
+            var children = cluster.getAllChildMarkers();
+            var count = cluster.getChildCount();
+
+            // Pick up to 4 thumbnails from cluster children
+            var thumbs = [];
+            for (var t = 0; t < children.length && thumbs.length < 4; t++) {
+                var cd = children[t]._photoData;
+                if (cd && cd.has_thumbnail) {
+                    thumbs.push(thumbURL(cd.file_path));
+                }
+            }
+
+            // Size based on count
+            var size = count > 100 ? 80 : count > 10 ? 72 : 64;
+            var cellSize = Math.floor(size / 2);
+
+            var html = '<div class="map-cluster-grid" style="width:' + size + 'px;height:' + size + 'px;">';
+            for (var c = 0; c < 4; c++) {
+                if (c < thumbs.length) {
+                    html += '<img class="map-cluster-thumb" src="' + thumbs[c] +
+                        '" width="' + cellSize + '" height="' + cellSize + '" loading="lazy">';
+                } else {
+                    html += '<div class="map-cluster-empty" style="width:' + cellSize + 'px;height:' + cellSize + 'px;"></div>';
+                }
+            }
+            html += '<span class="map-cluster-badge">' + count + '</span>';
+            html += '</div>';
+
+            return L.divIcon({
+                html: html,
+                className: 'map-cluster-icon',
+                iconSize: L.point(size, size),
+                iconAnchor: L.point(size / 2, size / 2)
+            });
+        }
+
+        // Custom single-marker icon: thumbnail circle
+        function createSingleIcon(point) {
+            var markerSize = 44;
+            var html;
+            if (point.has_thumbnail) {
+                html = '<div class="map-single-thumb">' +
+                    '<img src="' + thumbURL(point.file_path) + '" width="' + markerSize + '" height="' + markerSize + '" loading="lazy">' +
+                '</div>';
+            } else {
+                html = '<div class="map-single-thumb map-single-no-thumb">&#128247;</div>';
+            }
+            return L.divIcon({
+                html: html,
+                className: 'map-single-icon',
+                iconSize: L.point(markerSize, markerSize),
+                iconAnchor: L.point(markerSize / 2, markerSize / 2)
+            });
+        }
+
         var cluster = L.markerClusterGroup({
             maxClusterRadius: 60,
             spiderfyOnMaxZoom: true,
             showCoverageOnHover: false,
-            zoomToBoundsOnClick: true
+            zoomToBoundsOnClick: true,
+            iconCreateFunction: createClusterIcon
         });
 
         var bounds = [];
@@ -1007,15 +1205,14 @@ function renderGallery() {
             var latlng = [p.latitude, p.longitude];
             bounds.push(latlng);
 
-            var marker = L.marker(latlng);
+            var marker = L.marker(latlng, { icon: createSingleIcon(p) });
             marker._photoData = p;
             marker.on('click', function(e) {
                 var d = e.target._photoData;
                 var thumbHtml = '';
                 if (d.has_thumbnail) {
-                    var thumbUrl = '/api/v1/gallery/thumb/' + API.encodeURIPath(d.file_path.replace(/^\//, ''));
-                    thumbHtml = '<img class="map-popup-thumb" src="' + thumbUrl +
-                        '?token=' + API.getToken() + '" alt="' + esc(d.file_name) + '" loading="lazy">';
+                    thumbHtml = '<img class="map-popup-thumb" src="' + thumbURL(d.file_path) +
+                        '" alt="' + esc(d.file_name) + '" loading="lazy">';
                 }
 
                 var dateStr = '';
@@ -2300,6 +2497,181 @@ function renderGallery() {
             'July', 'August', 'September', 'October', 'November', 'December'];
         return months[parseInt(monthNum, 10)] || 'Month ' + monthNum;
     }
+
+    // ── Batch Tag Modal ────────────────────────────────────────────────────
+
+    function showBatchTagModal() {
+        var count = gallerySelectionCount();
+        if (count === 0) return;
+
+        var overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        var modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.innerHTML =
+            '<h3>Tag ' + count + ' image' + (count > 1 ? 's' : '') + '</h3>' +
+            '<div class="form-group">' +
+                '<label for="batch-tag-input">Tags (comma-separated)</label>' +
+                '<input type="text" id="batch-tag-input" placeholder="nature, vacation, family">' +
+            '</div>' +
+            '<div id="batch-tag-suggestions" class="gallery-tag-suggestions"></div>' +
+            '<div id="batch-tag-error"></div>' +
+            '<div class="modal-actions">' +
+                '<button class="btn" id="batch-tag-submit">Apply Tags</button>' +
+                '<button class="btn btn-outline" id="batch-tag-cancel">Cancel</button>' +
+            '</div>';
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        // Load tag suggestions
+        API.get('/api/v1/gallery/tags').then(function(tags) {
+            var sugDiv = document.getElementById('batch-tag-suggestions');
+            if (!sugDiv || !tags || tags.length === 0) return;
+            var html = '';
+            var shown = tags.slice(0, 20);
+            for (var i = 0; i < shown.length; i++) {
+                html += '<span class="gallery-tag-pill batch-tag-sug" data-tag="' + esc(shown[i].tag) + '">' + esc(shown[i].tag) + '</span> ';
+            }
+            sugDiv.innerHTML = html;
+            var pills = sugDiv.querySelectorAll('.batch-tag-sug');
+            for (var j = 0; j < pills.length; j++) {
+                pills[j].addEventListener('click', function() {
+                    var input = document.getElementById('batch-tag-input');
+                    var current = input.value.trim();
+                    var tag = this.getAttribute('data-tag');
+                    if (current) {
+                        input.value = current + ', ' + tag;
+                    } else {
+                        input.value = tag;
+                    }
+                });
+            }
+        });
+
+        overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+        document.getElementById('batch-tag-cancel').addEventListener('click', function() { overlay.remove(); });
+        document.getElementById('batch-tag-submit').addEventListener('click', function() {
+            var raw = document.getElementById('batch-tag-input').value;
+            var tags = raw.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+            if (tags.length === 0) return;
+            var paths = Object.keys(gallerySelected);
+            var errDiv = document.getElementById('batch-tag-error');
+            errDiv.innerHTML = '';
+
+            API.post('/api/v1/bulk/tag', { paths: paths, tags: tags }).then(function(resp) {
+                return resp.json();
+            }).then(function(data) {
+                overlay.remove();
+                if (data.succeeded > 0) {
+                    Toast.success('Tagged ' + data.succeeded + ' item' + (data.succeeded > 1 ? 's' : ''));
+                }
+                if (data.failed > 0) {
+                    Toast.error(data.failed + ' failed');
+                }
+                clearGallerySelection();
+            }).catch(function() {
+                errDiv.innerHTML = '<div class="alert alert-error">Failed to apply tags</div>';
+            });
+        });
+    }
+
+    // ── Batch Album Modal ───────────────────────────────────────────────────
+
+    function showBatchAlbumModal() {
+        var count = gallerySelectionCount();
+        if (count === 0) return;
+
+        var overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        var modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.innerHTML =
+            '<h3>Add ' + count + ' image' + (count > 1 ? 's' : '') + ' to Album</h3>' +
+            '<div class="form-group">' +
+                '<label for="batch-album-select">Album</label>' +
+                '<select id="batch-album-select"><option value="">Loading...</option></select>' +
+            '</div>' +
+            '<div id="batch-album-error"></div>' +
+            '<div class="modal-actions">' +
+                '<button class="btn" id="batch-album-submit">Add to Album</button>' +
+                '<button class="btn btn-outline" id="batch-album-cancel">Cancel</button>' +
+            '</div>';
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        // Load user albums
+        API.get('/api/v1/gallery/albums').then(function(albums) {
+            var sel = document.getElementById('batch-album-select');
+            if (!sel) return;
+            if (!albums || albums.length === 0) {
+                sel.innerHTML = '<option value="">No albums — create one first</option>';
+                return;
+            }
+            var html = '<option value="">Select an album...</option>';
+            for (var i = 0; i < albums.length; i++) {
+                html += '<option value="' + albums[i].id + '">' + esc(albums[i].name) + '</option>';
+            }
+            sel.innerHTML = html;
+        });
+
+        overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+        document.getElementById('batch-album-cancel').addEventListener('click', function() { overlay.remove(); });
+        document.getElementById('batch-album-submit').addEventListener('click', function() {
+            var albumId = parseInt(document.getElementById('batch-album-select').value, 10);
+            if (!albumId) return;
+            var paths = Object.keys(gallerySelected);
+            var errDiv = document.getElementById('batch-album-error');
+            errDiv.innerHTML = '';
+
+            API.post('/api/v1/bulk/album-add', { paths: paths, album_id: albumId }).then(function(resp) {
+                return resp.json();
+            }).then(function(data) {
+                overlay.remove();
+                if (data.succeeded > 0) {
+                    Toast.success('Added ' + data.succeeded + ' image' + (data.succeeded > 1 ? 's' : '') + ' to album');
+                }
+                if (data.failed > 0) {
+                    Toast.error(data.failed + ' failed');
+                }
+                clearGallerySelection();
+            }).catch(function() {
+                errDiv.innerHTML = '<div class="alert alert-error">Failed to add to album</div>';
+            });
+        });
+    }
+
+    // ── Gallery Keyboard Shortcuts ──────────────────────────────────────────
+
+    function galleryKeyHandler(e) {
+        if (currentPage !== 'images') return;
+        // Ignore if in input/textarea
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+        // Ctrl+A / Cmd+A — select all visible
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+            e.preventDefault();
+            for (var i = 0; i < items.length; i++) {
+                gallerySelected[items[i].file_path] = true;
+            }
+            syncGalleryCheckboxes();
+            updateBatchToolbar();
+            return;
+        }
+        // Escape — deselect all
+        if (e.key === 'Escape' && gallerySelectionCount() > 0) {
+            e.preventDefault();
+            clearGallerySelection();
+            return;
+        }
+    }
+    document.addEventListener('keydown', galleryKeyHandler);
+
+    // Cleanup keyboard handler when navigating away
+    var origCleanupURLs = cleanupObjectURLs;
+    cleanupObjectURLs = function() {
+        origCleanupURLs();
+        document.removeEventListener('keydown', galleryKeyHandler);
+    };
 
     // ── Init ─────────────────────────────────────────────────────────────────
 

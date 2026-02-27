@@ -213,16 +213,24 @@ type FilePropertiesResponse struct {
 	VersionCount int `json:"version_count"`
 }
 
+// BandwidthHistoryPoint is a single day's bandwidth usage.
+type BandwidthHistoryPoint struct {
+	Date     string `json:"date"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
+}
+
 // UserDashboardResponse is returned by GET /api/v1/user/dashboard.
 type UserDashboardResponse struct {
-	UserID         int                   `json:"user_id"`
-	Username       string                `json:"username"`
-	StorageUsed    int64                 `json:"storage_used"`
-	BandwidthToday int64                `json:"bandwidth_today"`
-	Quota          UserQuotaResponse     `json:"quota"`
-	Groups         []UserGroupInfo       `json:"groups"`
-	FileCount      int                   `json:"file_count"`
-	ShareLinkCount int                   `json:"share_link_count"`
+	UserID            int                     `json:"user_id"`
+	Username          string                  `json:"username"`
+	StorageUsed       int64                   `json:"storage_used"`
+	BandwidthToday    int64                   `json:"bandwidth_today"`
+	Quota             UserQuotaResponse       `json:"quota"`
+	Groups            []UserGroupInfo         `json:"groups"`
+	FileCount         int                     `json:"file_count"`
+	ShareLinkCount    int                     `json:"share_link_count"`
+	BandwidthHistory  []BandwidthHistoryPoint `json:"bandwidth_history,omitempty"`
 }
 
 // UserGroupInfo is a group membership entry for the user dashboard.
@@ -478,6 +486,12 @@ type BulkShareRequest struct {
 type BulkTagRequest struct {
 	Paths []string `json:"paths"`
 	Tags  []string `json:"tags"`
+}
+
+// BulkAlbumAddRequest is the body for POST /api/v1/bulk/album-add.
+type BulkAlbumAddRequest struct {
+	Paths   []string `json:"paths"`
+	AlbumID int      `json:"album_id"`
 }
 
 // BulkResponse is the response for bulk operations.

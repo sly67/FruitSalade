@@ -24,6 +24,8 @@ type Event struct {
 	Hash      string `json:"hash,omitempty"`
 	Size      int64  `json:"size,omitempty"`
 	Timestamp int64  `json:"timestamp"`
+	UserID    int    `json:"user_id,omitempty"`
+	Username  string `json:"username,omitempty"`
 }
 
 // Broadcaster manages SSE subscribers and publishes events.

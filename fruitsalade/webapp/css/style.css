@@ -3184,6 +3184,7 @@ mark {
     transform: translateY(-1px);
 }
 
+/* Gallery selection */
 .gallery-grid-thumb {
     aspect-ratio: 1;
     overflow: hidden;
@@ -3191,6 +3192,64 @@ mark {
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
+}
+
+.gallery-select-overlay {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 0.15s;
+    cursor: pointer;
+    line-height: 1;
+}
+.gallery-grid-item:hover .gallery-select-overlay,
+.gallery-selected .gallery-select-overlay {
+    opacity: 1;
+}
+.gallery-select-overlay .row-checkbox {
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+}
+.gallery-selected {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+}
+.gallery-select-col {
+    width: 32px;
+    text-align: center;
+    padding: 0.25rem !important;
+}
+.gallery-list-row.gallery-selected {
+    background: rgba(37, 99, 235, 0.08);
+}
+.gallery-batch-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--primary);
+    border-radius: var(--radius);
+    margin: 0.5rem 1rem;
+}
+.gallery-batch-count {
+    font-weight: 600;
+    margin-right: 0.5rem;
+}
+.gallery-tag-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+.gallery-tag-suggestions .gallery-tag-pill {
+    cursor: pointer;
+}
+.gallery-tag-suggestions .gallery-tag-pill:hover {
+    background: var(--primary);
+    color: #fff;
 }
 
 .gallery-grid-thumb img {
@@ -5974,6 +6033,140 @@ mark {
         padding: 0.25rem 0.45rem;
         font-size: 0.85rem;
     }
+}
+
+/* ─── Activity Feed ──────────────────────────────────────────────────────── */
+
+.activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+.activity-date-header {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 1rem 0 0.25rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0.25rem;
+}
+.activity-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+}
+.activity-entry:last-child {
+    border-bottom: none;
+}
+.activity-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+    width: 28px;
+    text-align: center;
+    padding-top: 2px;
+}
+.activity-body {
+    flex: 1;
+    min-width: 0;
+}
+.activity-text {
+    display: block;
+    font-size: 0.9rem;
+}
+.activity-path {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 500;
+}
+.activity-path:hover {
+    text-decoration: underline;
+}
+.activity-time {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 0.5rem;
+}
+.activity-full-path {
+    display: block;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ─── Map Thumbnail Clusters ──────────────────────────────────────────────── */
+
+.map-cluster-icon,
+.map-single-icon {
+    background: none !important;
+    border: none !important;
+}
+
+.map-cluster-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    position: relative;
+    border: 2px solid #fff;
+}
+
+.map-cluster-thumb {
+    object-fit: cover;
+    display: block;
+}
+
+.map-cluster-empty {
+    background: var(--bg-secondary, #e5e7eb);
+}
+
+.map-cluster-badge {
+    position: absolute;
+    bottom: -4px;
+    right: -4px;
+    background: var(--primary, #2563EB);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    min-width: 20px;
+    height: 20px;
+    line-height: 20px;
+    text-align: center;
+    border-radius: 10px;
+    padding: 0 5px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    border: 1.5px solid #fff;
+}
+
+.map-single-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    overflow: hidden;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+    border: 2px solid #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary, #e5e7eb);
+}
+
+.map-single-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.map-single-no-thumb {
+    font-size: 1.1rem;
+    color: var(--text-muted, #6b7280);
 }
 
 /* ─── Small phone (<=480px) ───────────────────────────────────────────────── */
