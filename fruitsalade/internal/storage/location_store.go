@@ -17,6 +17,7 @@ type LocationRow struct {
 	Config      json.RawMessage `json:"config"`
 	Priority    int             `json:"priority"`
 	IsDefault   bool            `json:"is_default"`
+	ReadOnly    bool            `json:"read_only"    db:"read_only"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
 }
@@ -34,7 +35,7 @@ func NewLocationStore(db *sql.DB) *LocationStore {
 // List returns all storage locations.
 func (s *LocationStore) List(ctx context.Context) ([]LocationRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, group_id, backend_type, config, priority, is_default, created_at, updated_at
+		`SELECT id, name, group_id, backend_type, config, priority, is_default, read_only, created_at, updated_at
 		 FROM storage_locations ORDER BY priority DESC, name`)
 	if err != nil {
 		return nil, fmt.Errorf("list storage locations: %w", err)
@@ -46,7 +47,7 @@ func (s *LocationStore) List(ctx context.Context) ([]LocationRow, error) {
 		var loc LocationRow
 		var groupID sql.NullInt64
 		if err := rows.Scan(&loc.ID, &loc.Name, &groupID, &loc.BackendType,
-			&loc.Config, &loc.Priority, &loc.IsDefault, &loc.CreatedAt, &loc.UpdatedAt); err != nil {
+			&loc.Config, &loc.Priority, &loc.IsDefault, &loc.ReadOnly, &loc.CreatedAt, &loc.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan storage location: %w", err)
 		}
 		if groupID.Valid {
@@ -63,10 +64,10 @@ func (s *LocationStore) Get(ctx context.Context, id int) (*LocationRow, error) {
 	var loc LocationRow
 	var groupID sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, group_id, backend_type, config, priority, is_default, created_at, updated_at
+		`SELECT id, name, group_id, backend_type, config, priority, is_default, read_only, created_at, updated_at
 		 FROM storage_locations WHERE id = $1`, id).
 		Scan(&loc.ID, &loc.Name, &groupID, &loc.BackendType,
-			&loc.Config, &loc.Priority, &loc.IsDefault, &loc.CreatedAt, &loc.UpdatedAt)
+			&loc.Config, &loc.Priority, &loc.IsDefault, &loc.ReadOnly, &loc.CreatedAt, &loc.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -83,7 +84,7 @@ func (s *LocationStore) Get(ctx context.Context, id int) (*LocationRow, error) {
 // GetByGroupID returns storage locations for a group, ordered by priority desc.
 func (s *LocationStore) GetByGroupID(ctx context.Context, groupID int) ([]LocationRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, group_id, backend_type, config, priority, is_default, created_at, updated_at
+		`SELECT id, name, group_id, backend_type, config, priority, is_default, read_only, created_at, updated_at
 		 FROM storage_locations WHERE group_id = $1 ORDER BY priority DESC`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("get by group: %w", err)
@@ -95,7 +96,7 @@ func (s *LocationStore) GetByGroupID(ctx context.Context, groupID int) ([]Locati
 		var loc LocationRow
 		var gid sql.NullInt64
 		if err := rows.Scan(&loc.ID, &loc.Name, &gid, &loc.BackendType,
-			&loc.Config, &loc.Priority, &loc.IsDefault, &loc.CreatedAt, &loc.UpdatedAt); err != nil {
+			&loc.Config, &loc.Priority, &loc.IsDefault, &loc.ReadOnly, &loc.CreatedAt, &loc.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if gid.Valid {
@@ -112,10 +113,10 @@ func (s *LocationStore) GetDefault(ctx context.Context) (*LocationRow, error) {
 	var loc LocationRow
 	var groupID sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, group_id, backend_type, config, priority, is_default, created_at, updated_at
+		`SELECT id, name, group_id, backend_type, config, priority, is_default, read_only, created_at, updated_at
 		 FROM storage_locations WHERE is_default = TRUE LIMIT 1`).
 		Scan(&loc.ID, &loc.Name, &groupID, &loc.BackendType,
-			&loc.Config, &loc.Priority, &loc.IsDefault, &loc.CreatedAt, &loc.UpdatedAt)
+			&loc.Config, &loc.Priority, &loc.IsDefault, &loc.ReadOnly, &loc.CreatedAt, &loc.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -132,10 +133,10 @@ func (s *LocationStore) GetDefault(ctx context.Context) (*LocationRow, error) {
 // Create inserts a new storage location and returns it with the generated ID.
 func (s *LocationStore) Create(ctx context.Context, loc *LocationRow) (*LocationRow, error) {
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO storage_locations (name, group_id, backend_type, config, priority, is_default)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO storage_locations (name, group_id, backend_type, config, priority, is_default, read_only)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id, created_at, updated_at`,
-		loc.Name, loc.GroupID, loc.BackendType, loc.Config, loc.Priority, loc.IsDefault).
+		loc.Name, loc.GroupID, loc.BackendType, loc.Config, loc.Priority, loc.IsDefault, loc.ReadOnly).
 		Scan(&loc.ID, &loc.CreatedAt, &loc.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create storage location: %w", err)
@@ -147,9 +148,9 @@ func (s *LocationStore) Create(ctx context.Context, loc *LocationRow) (*Location
 func (s *LocationStore) Update(ctx context.Context, loc *LocationRow) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE storage_locations
-		 SET name = $2, group_id = $3, backend_type = $4, config = $5, priority = $6, updated_at = NOW()
+		 SET name = $2, group_id = $3, backend_type = $4, config = $5, priority = $6, read_only = $7, updated_at = NOW()
 		 WHERE id = $1`,
-		loc.ID, loc.Name, loc.GroupID, loc.BackendType, loc.Config, loc.Priority)
+		loc.ID, loc.Name, loc.GroupID, loc.BackendType, loc.Config, loc.Priority, loc.ReadOnly)
 	if err != nil {
 		return fmt.Errorf("update storage location: %w", err)
 	}

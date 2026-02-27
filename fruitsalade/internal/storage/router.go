@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +12,9 @@ import (
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/logging"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/sharing"
 )
+
+// ErrReadOnlyStorage is returned when a write operation targets a read-only storage location.
+var ErrReadOnlyStorage = errors.New("storage location is read-only")
 
 // StorageLocation pairs a LocationRow with its instantiated Backend.
 type StorageLocation struct {
@@ -149,6 +153,7 @@ func (r *Router) ResolveForFile(ctx context.Context, storageLocID *int, groupID 
 
 // ResolveForUpload resolves which backend to use for a new file upload.
 // Priority: groupID (walk to root) > path-based group match > default.
+// Returns ErrReadOnlyStorage if the resolved location is read-only.
 func (r *Router) ResolveForUpload(ctx context.Context, path string, groupID *int) (Backend, *StorageLocation, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -157,6 +162,9 @@ func (r *Router) ResolveForUpload(ctx context.Context, path string, groupID *int
 	if groupID != nil && *groupID > 0 {
 		loc := r.resolveByGroup(ctx, *groupID)
 		if loc != nil {
+			if loc.ReadOnly {
+				return nil, loc, ErrReadOnlyStorage
+			}
 			return loc.Backend, loc, nil
 		}
 	}
@@ -167,6 +175,9 @@ func (r *Router) ResolveForUpload(ctx context.Context, path string, groupID *int
 		if firstSeg != "" {
 			loc := r.resolveByGroupName(ctx, firstSeg)
 			if loc != nil {
+				if loc.ReadOnly {
+					return nil, loc, ErrReadOnlyStorage
+				}
 				return loc.Backend, loc, nil
 			}
 		}
@@ -174,10 +185,23 @@ func (r *Router) ResolveForUpload(ctx context.Context, path string, groupID *int
 
 	// 3. Default
 	if r.defaultLoc != nil {
+		if r.defaultLoc.ReadOnly {
+			return nil, r.defaultLoc, ErrReadOnlyStorage
+		}
 		return r.defaultLoc.Backend, r.defaultLoc, nil
 	}
 
 	return nil, nil, fmt.Errorf("no storage backend available")
+}
+
+// IsReadOnly returns whether a storage location is read-only.
+func (r *Router) IsReadOnly(locID int) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if loc, ok := r.locations[locID]; ok {
+		return loc.ReadOnly
+	}
+	return false
 }
 
 // GetDefault returns the default backend and location.

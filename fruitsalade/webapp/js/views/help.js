@@ -778,7 +778,9 @@ var HELP_ARTICLES = [
                 '<tr><td><strong>S3</strong></td><td>S3-compatible (AWS, MinIO, Wasabi, etc.)</td></tr>' +
                 '<tr><td><strong>SMB</strong></td><td>Windows file shares / CIFS mounts</td></tr>' +
             '</table>' +
-            '<p>Configure storage locations from <strong>Admin &rarr; Storage</strong>. The storage router automatically directs uploads to the correct backend based on group membership.</p>'
+            '<p>Configure storage locations from <strong>Admin &rarr; Storage</strong>. The storage router automatically directs uploads to the correct backend based on group membership.</p>' +
+            '<h4>Read-Only Storage</h4>' +
+            '<p>Enable the <strong>Read Only</strong> option on a storage location to allow users to browse and download files but prevent any uploads, modifications, or deletions. This is useful for mounting existing external storage (e.g., an archive SMB share or S3 bucket) as browse-only. The read-only restriction applies to <em>all users</em> for that location, regardless of their role.</p>'
     },
     {
         id: 'admin-quotas',

@@ -1,0 +1,1 @@
+ALTER TABLE storage_locations ADD COLUMN read_only BOOLEAN NOT NULL DEFAULT FALSE;

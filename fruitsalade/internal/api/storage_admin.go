@@ -71,6 +71,7 @@ func (s *Server) handleCreateStorageLocation(w http.ResponseWriter, r *http.Requ
 		BackendType string          `json:"backend_type"`
 		Config      json.RawMessage `json:"config"`
 		Priority    int             `json:"priority"`
+		ReadOnly    *bool           `json:"read_only"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, "invalid request body")
@@ -92,6 +93,9 @@ func (s *Server) handleCreateStorageLocation(w http.ResponseWriter, r *http.Requ
 		BackendType: req.BackendType,
 		Config:      req.Config,
 		Priority:    req.Priority,
+	}
+	if req.ReadOnly != nil {
+		row.ReadOnly = *req.ReadOnly
 	}
 
 	created, err := s.locationStore.Create(r.Context(), row)
@@ -142,6 +146,7 @@ func (s *Server) handleUpdateStorageLocation(w http.ResponseWriter, r *http.Requ
 		BackendType *string         `json:"backend_type"`
 		Config      json.RawMessage `json:"config"`
 		Priority    *int            `json:"priority"`
+		ReadOnly    *bool           `json:"read_only"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, "invalid request body")
@@ -162,6 +167,9 @@ func (s *Server) handleUpdateStorageLocation(w http.ResponseWriter, r *http.Requ
 	}
 	if req.Priority != nil {
 		existing.Priority = *req.Priority
+	}
+	if req.ReadOnly != nil {
+		existing.ReadOnly = *req.ReadOnly
 	}
 
 	if err := s.locationStore.Update(r.Context(), existing); err != nil {
@@ -245,6 +253,29 @@ func (s *Server) handleTestStorageLocation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer backend.Close()
+
+	if loc.ReadOnly {
+		// Read-only location: only test read connectivity (list/stat probe)
+		// Try to stat a known key; a "not found" error is fine — it proves connectivity.
+		_, _, statErr := backend.GetObject(ctx, "_fruitsalade_read_probe", 0, 0)
+		// Accept "not found" style errors as success (connectivity works)
+		if statErr != nil && !isNotFoundError(statErr) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "read test failed: " + statErr.Error(),
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":      true,
+			"backend_type": loc.BackendType,
+			"read_only":    true,
+		})
+		return
+	}
 
 	// Try write + read + delete of a test file
 	testKey := "_fruitsalade_test_probe"
@@ -344,6 +375,7 @@ func redactedLocationMap(loc storage.LocationRow) map[string]interface{} {
 		"backend_type": loc.BackendType,
 		"priority":     loc.Priority,
 		"is_default":   loc.IsDefault,
+		"read_only":    loc.ReadOnly,
 		"created_at":   loc.CreatedAt,
 		"updated_at":   loc.UpdatedAt,
 	}
@@ -365,4 +397,16 @@ func redactedLocationMap(loc storage.LocationRow) map[string]interface{} {
 	}
 
 	return m
+}
+
+// isNotFoundError checks if an error indicates an object was not found.
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no such key") ||
+		strings.Contains(msg, "nosuchkey") ||
+		strings.Contains(msg, "does not exist")
 }

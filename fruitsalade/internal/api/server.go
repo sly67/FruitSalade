@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -907,6 +908,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	backend, loc, err := s.storageRouter.ResolveForUpload(r.Context(), path, groupID)
 	if err != nil {
+		if errors.Is(err, storage.ErrReadOnlyStorage) {
+			s.sendError(w, http.StatusForbidden, "storage location is read-only")
+			return
+		}
 		s.sendError(w, http.StatusInternalServerError, "no storage backend: "+err.Error())
 		return
 	}
@@ -1014,6 +1019,13 @@ func (s *Server) handleCreateOrUpdate(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a directory creation
 	isDir := r.URL.Query().Get("type") == "dir"
 
+	// Check if the target storage location is read-only
+	_, _, roErr := s.storageRouter.ResolveForUpload(r.Context(), path, nil)
+	if roErr != nil && errors.Is(roErr, storage.ErrReadOnlyStorage) {
+		s.sendError(w, http.StatusForbidden, "storage location is read-only")
+		return
+	}
+
 	if isDir {
 		// Create directory
 		if err := s.ensureParentDirs(r.Context(), path); err != nil {
@@ -1099,6 +1111,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if fileRow == nil {
 		s.sendError(w, http.StatusNotFound, "path not found: "+path)
+		return
+	}
+
+	// Check if file's storage location is read-only
+	if fileRow.StorageLocID != nil && s.storageRouter.IsReadOnly(*fileRow.StorageLocID) {
+		s.sendError(w, http.StatusForbidden, "storage location is read-only")
 		return
 	}
 
@@ -1239,6 +1257,12 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 	currentRow, err := s.metadata.GetFileRow(r.Context(), path)
 	if err != nil || currentRow == nil {
 		s.sendError(w, http.StatusNotFound, "file not found: "+path)
+		return
+	}
+
+	// Check if file's storage location is read-only
+	if currentRow.StorageLocID != nil && s.storageRouter.IsReadOnly(*currentRow.StorageLocID) {
+		s.sendError(w, http.StatusForbidden, "storage location is read-only")
 		return
 	}
 

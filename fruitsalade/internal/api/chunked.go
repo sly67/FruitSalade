@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/logging"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/metadata/postgres"
 	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/metrics"
+	"github.com/fruitsalade/fruitsalade/fruitsalade/internal/storage"
 	"go.uber.org/zap"
 )
 
@@ -114,6 +116,13 @@ func (m *ChunkedUploadManager) handleInitUpload(w http.ResponseWriter, r *http.R
 	// Check write permission
 	if !m.server.permissions.CheckAccess(r.Context(), claims.UserID, path, "write", claims.IsAdmin) {
 		m.sendError(w, http.StatusForbidden, "write access denied")
+		return
+	}
+
+	// Check if the target storage is read-only before allocating resources
+	_, _, roErr := m.server.storageRouter.ResolveForUpload(r.Context(), path, nil)
+	if roErr != nil && errors.Is(roErr, storage.ErrReadOnlyStorage) {
+		m.sendError(w, http.StatusForbidden, "storage location is read-only")
 		return
 	}
 
@@ -379,6 +388,10 @@ func (m *ChunkedUploadManager) handleCompleteUpload(w http.ResponseWriter, r *ht
 	backend, loc, err := m.server.storageRouter.ResolveForUpload(r.Context(), path, groupID)
 	if err != nil {
 		f.Close()
+		if errors.Is(err, storage.ErrReadOnlyStorage) {
+			m.sendError(w, http.StatusForbidden, "storage location is read-only")
+			return
+		}
 		m.sendError(w, http.StatusInternalServerError, "no storage backend: "+err.Error())
 		return
 	}

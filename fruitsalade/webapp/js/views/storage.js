@@ -43,7 +43,9 @@ function renderStorageTable(locations) {
     for (var i = 0; i < locations.length; i++) {
         var loc = locations[i];
         html += '<tr>' +
-            '<td>' + esc(loc.name) + '</td>' +
+            '<td>' + esc(loc.name) +
+                (loc.read_only ? ' <span class="badge badge-yellow">Read Only</span>' : '') +
+            '</td>' +
             '<td><span class="badge badge-' + backendBadgeColor(loc.backend_type) + '">' +
                 esc(loc.backend_type.toUpperCase()) + '</span></td>' +
             '<td>' + (loc.group_id ? '<span class="badge badge-blue">Group #' + loc.group_id + '</span>' : '-') + '</td>' +
@@ -148,6 +150,8 @@ function storageFormHTML(loc) {
     var groupID = isEdit && loc.group_id ? loc.group_id : '';
     var config = isEdit && loc.config ? loc.config : {};
 
+    var readOnly = isEdit ? !!loc.read_only : false;
+
     var html = '<form id="storage-form">' +
         '<div class="form-group">' +
             '<label for="storage-name">Name</label>' +
@@ -170,6 +174,10 @@ function storageFormHTML(loc) {
         '<div class="form-group">' +
             '<label for="storage-priority">Priority (higher = preferred)</label>' +
             '<input type="number" id="storage-priority" value="' + priority + '">' +
+        '</div>' +
+        '<div class="form-group">' +
+            '<label><input type="checkbox" id="storage-readonly"' + (readOnly ? ' checked' : '') +
+            '> Read Only (browse and download only, no uploads or modifications)</label>' +
         '</div>' +
         '<div id="storage-config-fields"></div>' +
         '<button type="submit" class="btn">' + (isEdit ? 'Update' : 'Create') + '</button>' +
@@ -223,11 +231,14 @@ function wireStorageForm(existingLoc) {
 
         var config = collectConfigValues(type);
 
+        var readOnly = document.getElementById('storage-readonly').checked;
+
         var body = {
             name: name,
             backend_type: type,
             config: config,
-            priority: priority
+            priority: priority,
+            read_only: readOnly
         };
         if (groupVal) {
             body.group_id = parseInt(groupVal, 10);
