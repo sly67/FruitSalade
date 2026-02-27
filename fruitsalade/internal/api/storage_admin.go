@@ -408,5 +408,6 @@ func isNotFoundError(err error) bool {
 	return strings.Contains(msg, "not found") ||
 		strings.Contains(msg, "no such key") ||
 		strings.Contains(msg, "nosuchkey") ||
-		strings.Contains(msg, "does not exist")
+		strings.Contains(msg, "does not exist") ||
+		strings.Contains(msg, "no such file or directory")
 }
